@@ -451,6 +451,10 @@ try {
   Case 'lane rollback rejects drift and restores exact bytes with another backup' {
     Write-Settings $variantText
     $current = Hash $settings
+    $journalBefore = Hash $journal
+    $r = Lane @('-RollbackBackup',$script:laneBackup,'-ExpectedCurrentHash',$current)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('scope=restore-backup-file') -and $r.Text.Contains('backup-bytes=restored') -and $r.Text.Contains('current-file=replaced')) $r.Text
+    Assert ((Hash $settings) -eq $current -and (Hash $journal) -eq $journalBefore) 'Rollback preview wrote data'
     $r = Lane @('-RollbackBackup',$script:laneBackup,'-ExpectedCurrentHash',('0'*64),'-Apply')
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $current) 'Lane rollback ignored drift guard'
     $r = Lane @('-RollbackBackup',$script:laneBackup,'-ExpectedCurrentHash',$current,'-Apply')

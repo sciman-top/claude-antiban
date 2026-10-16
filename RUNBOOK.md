@@ -157,7 +157,8 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
   回滚与上一节同款哈希钉死流程。
 - 回滚只接受本工具在设置文件旁创建、文件名以 `<设置文件名>.bak-claude-lane-` 开头的备份；
-  人工另存的备份不满足该判据，需按人工恢复处理并留痕。
+  人工另存的备份不满足该判据，需按人工恢复处理并留痕。回滚预览显示
+  `scope=restore-backup-file` 与 `backup-bytes=restored`；当前文件必须与 `ExpectedCurrentHash` 相符。
 
 ```powershell
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1                      # 只读 status

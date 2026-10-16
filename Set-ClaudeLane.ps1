@@ -217,7 +217,11 @@ if ($RollbackBackup) {
 $afterHash = Get-Hash $afterBytes
 if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE'; exit 0 }
 if (-not $Apply) {
-  Write-Output ('PREVIEW actions=' + ($actions -join ',') + '; full-file-replacement=true; extra-settings=not-preserved; add -Apply to write')
+  if ($RollbackBackup) {
+    Write-Output ('PREVIEW actions=' + ($actions -join ',') + '; scope=restore-backup-file; backup-bytes=restored; current-file=replaced; add -Apply to write')
+  } else {
+    Write-Output ('PREVIEW actions=' + ($actions -join ',') + '; full-file-replacement=true; extra-settings=not-preserved; add -Apply to write')
+  }
   exit 0
 }
 
