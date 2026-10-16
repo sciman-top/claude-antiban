@@ -90,12 +90,12 @@ $fixture = @{
 } | ConvertTo-Json -Depth 20 -EscapeHandling EscapeNonAscii
 $mock = Join-Path $root 'mock.ps1'
 [IO.File]::WriteAllText($mock, @'
-param([string]$Script,[string]$Mode,[string]$SettingsPath)
+param([string]$Script,[string]$Mode,[string]$SettingsPath,[string]$RepoRoot)
 $ErrorActionPreference='Stop'
 function global:Set-TimeZone { throw 'Unexpected timezone mutation' }
 function global:Invoke-WebRequest {
   param($Uri,$Proxy,$TimeoutSec,$MaximumRedirection)
-  if($Mode -in @('default','restore')) { throw 'Unexpected network request' }
+  if($Mode -in @('default','restore','surface','surface-no-proxy')) { throw 'Unexpected network request' }
   if($Mode -eq 'unreachable') { throw 'Fixture unreachable' }
   if($Uri -ne 'https://api.ipify.org' -or $TimeoutSec -ne 8 -or $MaximumRedirection -ne 0) { throw 'Unexpected diagnostic request' }
   if($Mode -eq 'invalid') { return @{Content='not-an-ip'} }
@@ -104,6 +104,9 @@ function global:Invoke-WebRequest {
 if($Mode -eq 'default') { & $Script -SettingsPath $SettingsPath }
 elseif($Mode -eq 'restore') { & $Script -Restore -SettingsPath $SettingsPath }
 elseif($Mode -eq 'retired') { & $Script }
+elseif($Mode -eq 'surface') { & $Script -RepoRoot $RepoRoot }
+elseif($Mode -eq 'surface-no-proxy') { & $Script -RepoRoot $RepoRoot -CheckExitIp }
+elseif($Mode -eq 'surface-exit') { & $Script -RepoRoot $RepoRoot -CheckExitIp -ExpectedIp '203.0.113.9' -Proxy 'http://127.0.0.1:1' }
 else { & $Script -CheckExitIp -ExpectedIp $(if($Mode -eq 'mismatch'){'203.0.113.10'}else{'203.0.113.9'}) -Proxy 'http://127.0.0.1:1' }
 exit $LASTEXITCODE
 '@)
@@ -288,7 +291,39 @@ try {
     Assert ($r.Code -eq 0 -and $r.Text.Contains('USER_SETTINGS=absent') -and $r.Text.Contains('ANTHROPIC_BASE_URL settings_present=False process_present=True')) $r.Text
     Assert (-not $r.Text.Contains('process-secret-fixture')) 'Preflight leaked process values when settings are absent'
     $launcher=Get-Content -Raw -LiteralPath (Join-Path $repo 'start-claude-chrome.cmd')
-    Assert ($launcher -notmatch '--(proxy-server|lang|force-webrtc)') 'Launcher still forces identity/network flags'
+    Assert ($launcher -notmatch '--(proxy-server|lang|force-webrtc|disable-webrtc|user-agent|accept-lang)') 'Launcher still forces identity/network flags'
+  }
+  Case 'surface report is read-only, local-only and prints no infrastructure values' {
+    # The report exists so a third-party score can be attributed to host, browser or
+    # network facts without visiting a scoring site; it must stay read-only and must
+    # never put this machine's values into output that could be quoted elsewhere.
+    $surfaceRoot = Join-Path $root 'surface'
+    $surfaceProfile = Join-Path $surfaceRoot 'chrome-data/Default'
+    $null = New-Item -ItemType Directory -Path $surfaceProfile -Force
+    [IO.File]::WriteAllText((Join-Path $surfaceRoot 'start-claude-chrome.cmd'),
+      "@echo off`r`nstart `"`" `"chrome.exe`" --user-data-dir=`"%~dp0chrome-data`" --no-first-run `"https://claude.ai`"`r`n",
+      [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $surfaceProfile 'Preferences'),
+      '{"intl":{"selected_languages":["en-US","en"],"accept_languages":"en-US,en"},"webrtc":{"ip_handling_policy":"disable_non_proxied_udp"}}',
+      [Text.UTF8Encoding]::new($false))
+    $surfaceBefore = @(Get-ChildItem -LiteralPath $surfaceRoot -Recurse -Force | ForEach-Object { $_.FullName })
+    $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface','-RepoRoot',$surfaceRoot)
+    Assert ($r.Code -eq 0) $r.Text
+    Assert ($r.Text -match '(?m)^LAUNCHER=start-claude-chrome\.cmd flags=user-data-dir,no-first-run\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^BROWSER_PROFILE=present languages=en-US,en\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^WEBRTC_POLICY_OVERRIDE=present\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^EAST_ASIAN_FONTS_PRESENT=(True|False|unavailable)\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^SYSTEM_PROXY=(configured loopback=(True|False)|direct loopback=n/a|unavailable loopback=unavailable)\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^PROXY_ENV_PRESENT=process=none user=(none|\S+) machine=(none|\S+)\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^NETWORK_CHECK=not-requested\r?$') $r.Text
+    Assert (@(Get-ChildItem -LiteralPath $surfaceRoot -Recurse -Force | ForEach-Object { $_.FullName }).Count -eq $surfaceBefore.Count) 'Surface report added files'
+    foreach ($match in [regex]::Matches($r.Text, '(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])')) {
+      Assert ($match.Value -match '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)') ('Surface report printed a raw address: ' + $match.Value)
+    }
+    $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-no-proxy','-RepoRoot',$surfaceRoot)
+    Assert ($r.Code -eq 3) "Surface exit check without an explicit proxy returned $($r.Code): $($r.Text)"
+    $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-exit','-RepoRoot',$surfaceRoot)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('OBSERVED_IP=203.0.113.9')) $r.Text
   }
   Case 'lane status is read-only and classifies the relay form' {
     Write-Settings $relayText; $before = Hash $settings; $journalBefore = Hash $journal

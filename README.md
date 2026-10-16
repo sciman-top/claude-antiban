@@ -21,6 +21,7 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 | 入口 | 作用 | 默认行为 |
 | --- | --- | --- |
 | `prep-registration.ps1` | 只读预检 | 不登录、不调用模型 |
+| `Get-SurfaceReport.ps1` | 只读环境画像报告（系统区域/字体/浏览器 profile/代理来源） | 默认不联网、不写文件；出口检查须显式给出 HTTP 代理 |
 | `hooks/check-exit-ip.ps1` | 手动出口诊断 | 须显式给出预期出口与代理 |
 | `start-claude-chrome.cmd` | 普通独立 profile 启动专用浏览器 | 继承正常网络配置 |
 | `install.ps1` | 用户配置修复 | 默认预览，`-Apply` 才写机器 |

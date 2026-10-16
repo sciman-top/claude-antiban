@@ -84,6 +84,17 @@ pwsh -NoProfile -File .\hooks\check-exit-ip.ps1 -CheckExitIp -Proxy http://127.0
 若旧脚本曾改过时区，请在 Windows 设置中人工核对并按真实日常使用需求恢复；
 新脚本不猜测原值。
 
+`Get-SurfaceReport.ps1` 把第三方评分常见的扣分项归到本机事实，默认不联网、不写任何文件：
+
+```powershell
+pwsh -NoProfile -File .\Get-SurfaceReport.ps1
+# 需要出口诊断时显式给出 HTTP 代理；其余参数与 check-exit-ip.ps1 相同
+pwsh -NoProfile -File .\Get-SurfaceReport.ps1 -CheckExitIp -Proxy http://127.0.0.1:10808
+```
+
+输出只报状态与来源，不打印系统代理取值，也不写 `machine-journal.md`；
+解读口径见第 5 节。它不是评分工具，也不改变第 1 节的资格判断。
+
 `start-claude-chrome.cmd` 只启动官方 Chrome 的独立 `chrome-data/`；
 继承浏览器正常网络配置，不强设代理、语言、时区或 WebRTC。
 启动前先判断使用资格。已有 profile 继续保留，回滚不得删除 cookie 或会话数据。
@@ -247,6 +258,23 @@ issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接�
 旧文档关于 .cn 域名、WAF 检测机制、号码地区、付款金额、养号等待期等说法缺少可靠因果证据，
 不再转化为操作建议。第三方“风险评分”网站不得收集账号凭据，其评分不作为资格或安全验收。
 
+### 第三方风险评分怎么读
+
+第三方站点（例如 `checkcc.org`）的百分比是启发式评分，不是 Anthropic 的资格、安全或账号验收，
+也不构成提供账号凭据的理由。这类评分通常把“画像内部矛盾”记作风险：出口在一个国家，
+而系统时区、区域内设置与已安装字体指向另一个国家。先归因，再决定是否值得处理：
+
+| 常见扣分项 | 事实来源 | 本仓口径 |
+| --- | --- | --- |
+| 系统时区、`Intl`/区域设置、Emoji 渲染风格 | Windows 区域设置与系统安装 | 不伪装；改区域不取得资格（第 8 节 A） |
+| 厂商/东亚字体、设备与操作系统特征 | Windows 字体与硬件 | 不安装指纹清洗工具，不伪造设备标识或 UA |
+| WebRTC 公网 IP、DNS 与出口一致性 | 浏览器默认策略与本地 DNS | 只记为边界；不把“无泄漏”当作已验证结论（第 2 节） |
+| 出口国家、数据中心/云厂商、IP 情报一致性 | 代理出口本身 | 固定或住宅出口、第三方评分不保证安全（第 2 节） |
+| 浏览器语言、UA/Client Hints | 浏览器 profile 与版本 | 独立 profile 只隔离数据；不为评分改语言或 UA |
+
+`Get-SurfaceReport.ps1` 输出上表“事实来源”一列对应的本机事实：它不访问评分站点，
+不打印系统代理取值，也不改变任何设置。降低分数不是本仓目标。
+
 ## 6. 归宿与最低验收
 
 - 通用资格/环境/工具：本仓。skills-manager 中的通用管理功能继续由原项目维护。
@@ -306,6 +334,7 @@ append-only 指操作历史而言：历史条目里已经出现的凭据、订�
 
    ```powershell
    pwsh -NoProfile -File .\prep-registration.ps1
+   pwsh -NoProfile -File .\Get-SurfaceReport.ps1
    pwsh -NoProfile -File .\qa\test-tools.ps1
    ```
 
