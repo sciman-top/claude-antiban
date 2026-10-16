@@ -149,6 +149,7 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - ToOfficial 仅接受已识别 relay 形态、与当前模板一致，或规范化 USERPROFILE 并将换行统一为 LF 后 SHA256 等于仓库已知上一版模板摘要的现状；未识别配置直接拒绝，保留人工审查。
 - ToRelay 用 `-RelayVariant` 指向一份**仓外**自备的 relay 设置文件，把它投影成新的机器设置；工具只是切换器，
   既不生成、不保存、也不回显其中任何取值，journal 只记动作名与哈希。源文件同样支持 `%USERPROFILE%` 占位。
+  源文件是**完整的机器设置**（整文件替换）：以当前官方模板为底、只追加一个 `env` 块；写成最小文件会丢掉权限模板、deny 列表与 Manual 设置。
 - ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含 `env.ANTHROPIC_BASE_URL`，
   且不得含 `apiKeyHelper` 或 `hooks`；其他现状先 `-ToOfficial` 再切。文件放在仓库外本机目录，命名含 `token`/`credentials`
   可落入模板 deny 列表的读取拦截范围。
