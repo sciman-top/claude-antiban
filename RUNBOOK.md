@@ -42,7 +42,7 @@ CLI 支持 HTTP/HTTPS 代理，不支持 SOCKS 代理。不要把 SOCKS 端口�
 分别核对 Process / User / Machine 的 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY、NO_PROXY，
 以及 managed、user、project、local settings 和实际启动器。旧终端、GUI 或后台进程
 可能保留原环境；端口监听和一次 PowerShell 请求不能证明 CLI 的实际路由。
-预检对相关路由/认证变量仅报告 user settings 与 Process / User / Machine 各作用域的
+预检对相关路由/认证/请求覆盖变量仅报告 user settings 与 Process / User / Machine 各作用域的
 存在性，不读取或打印值；某作用域不可读时明确输出 unavailable。这不覆盖全部设置层级，
 也不能证明某个 Claude 进程实际继承了哪个值。
 
@@ -135,7 +135,8 @@ pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>'
 `Set-ClaudeLane.ps1` 管理 `~/.claude/settings.json` 在已识别中继形态（env 含
 `ANTHROPIC_BASE_URL`）与本仓模板 `settings.official-anthropic.json` 之间的整文件切换。
 无参数调用只输出只读 status：`current_lane=relay` 表示用户设置含 `ANTHROPIC_BASE_URL`，
-`official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置，`missing` 表示文件缺失。
+`official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置，`missing` 表示文件缺失，
+`invalid` 表示文件存在但不是有效 JSON 对象；写入路径对此仍拒绝，不因分类放行。
 status 只分类设置文件，不证明进程实际路由或账号资格；lane 切换是本机配置管理，不影响第 1 节的资格判断。
 status 同时返回 `process_overrides_present`（仅变量名）及 `route_verified=false`；
 即使 `current_lane=official`，父进程的中继环境仍可能影响普通启动的 Claude。
@@ -170,7 +171,7 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -LaunchOfficial
 
 两种动作均要求设置与模板字节一致，拒绝模板中的认证 helper、路由覆盖和运行中的
 CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、订阅 token 环境变量、Bedrock/Vertex/Foundry
-选择开关、已知模型/请求覆盖、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
+选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`）、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
 父进程、User/Machine 环境、凭据文件均不改写；HTTP/HTTPS/ALL_PROXY/NO_PROXY、
 自定义 CA 与隐私偏好原样保留，不预设应当直连。
 

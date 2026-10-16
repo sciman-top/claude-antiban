@@ -21,7 +21,9 @@ if (($OfficialPreflight -or $LaunchOfficial) -and ($Apply -or $ExpectedCurrentHa
 $legacyOfficialTemplateHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
 
 function Test-OfficialOverride([string]$Name) {
-  return $Name -imatch '^ANTHROPIC_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
+  # Beyond the ANTHROPIC_ prefix, these documented model/request overrides must
+  # not leak from a relay environment into an official-lane child process.
+  return $Name -imatch '^ANTHROPIC_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|CLAUDE_CODE_EXTRA_BODY|MAX_THINKING_TOKENS|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
 }
 
 function Get-Hash([byte[]]$Bytes) {
@@ -143,8 +145,13 @@ if (-not $ToOfficial -and -not $RollbackBackup) {
   $settingsBytes = $null
   if (Test-Path -LiteralPath $SettingsPath -PathType Leaf) {
     $settingsBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $SettingsPath).Path)
-    $settingsJson = Read-Json $settingsBytes
-    $lane = if (Test-RelayLane $settingsJson) { 'relay' } else { 'custom' }
+    try {
+      $settingsJson = Read-Json $settingsBytes
+      $lane = if (Test-RelayLane $settingsJson) { 'relay' } else { 'custom' }
+    } catch {
+      # Status classifies every on-disk state; write paths stay fail-closed via Read-Json.
+      $lane = 'invalid'
+    }
   }
   $variantReady = $false
   if (Test-Path -LiteralPath $VariantPath -PathType Leaf) {

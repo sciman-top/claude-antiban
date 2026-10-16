@@ -12,7 +12,7 @@ Write-Output ('TIMEZONE=' + (Get-TimeZone).Id + '; unchanged')
 if ($Restore) { Write-Output 'LEGACY_RESTORE_RETIRED: no automatic timezone change or restore.'; exit 0 }
 Write-Output 'ELIGIBILITY=not-determined; check actual location and entity eligibility against Supported Regions Policy.'
 Write-Output 'https://www.anthropic.com/legal/supported-regions'
-$envNames = @('ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','ANTHROPIC_CUSTOM_HEADERS','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_TLS_REJECT_UNAUTHORIZED','NODE_EXTRA_CA_CERTS','SSL_CERT_FILE')
+$envNames = @('ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_EXTRA_BODY','MAX_THINKING_TOKENS','ANTHROPIC_CUSTOM_HEADERS','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_TLS_REJECT_UNAUTHORIZED','NODE_EXTRA_CA_CERTS','SSL_CERT_FILE')
 $envScopes = @('Process','User','Machine')
 $scopedEnvironment = @{}
 foreach ($scope in $envScopes) {
