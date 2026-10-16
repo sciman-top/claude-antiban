@@ -307,6 +307,24 @@ issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接�
   同一次运行里站点报的「首个泄漏 IP」是这类片段、地区未知、与出口一致性无法判断，
   而不是真实公网地址；这类解析歧义不改用伪造候选来绕过。
 
+同日复测结论（三种 profile：仓库 profile、当日数据副本、全新空 profile，各跑一次）：
+
+- 浏览器侧取值三次一致且可复现：`RTCPeerConnection` + `stun:stun.l.google.com:19302`
+  收集到的候选只有一条形态如
+  `candidate:<id> 1 udp <prio> <uuid>.local <port> typ host ...`，`typ host` 即 mDNS 主机候选；
+  **没有任何 `typ srflx` 或公网地址**。这就是 `start-claude-chrome-leakless.cmd` 的验收口径：
+  用站点自己的探测参数，在密封策略下复现「无公网候选」。
+- 站点那一侧的 +19 分项不会因为浏览器密封而消失。实测该分数对应的「泄漏 IP」既不是
+  mDNS 主机名也不是地址，而是候选名与 ICE 凭据片段拼接出的占位串（换一次运行就换 value）；
+  它既不携带位置也不携带可达地址，属站点解析口径，本仓不为此改启动参数。
+- 同日在三种 profile 上，站点检测 UI 都停在「检测中」且不再推进；期间检测阶段没有发出
+  探测网络请求（只有分析类上报），因此既不能归因仓库 profile，也不能据此判定策略无效。
+  更早同日两次运行曾正常出分（83%），说明这是站点或出口侧当时的状态，不是本仓回归。
+- 站点健康时的复测步骤：`start-claude-chrome-leakless.cmd` 打开仓库窗口 → 访问
+  `https://checkcc.org/` → 点「立即检测 Claude 环境」→ 对照本节的 WebRTC 两项与
+  「首个 WebRTC 泄漏 IP」形态。浏览器候选的自查不依赖第三方站点：
+  `Get-SurfaceReport.ps1` 报出的启动器策略为 `sealed-by-launcher` 即表示密封入口已生效。
+
 ## 6. 归宿与最低验收
 
 - 通用资格/环境/工具：本仓。skills-manager 中的通用管理功能继续由原项目维护。
