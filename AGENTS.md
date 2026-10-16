@@ -5,11 +5,11 @@
 
 ## 1. 落点与真源
 - 本仓保留历史目录名，负责 Claude 使用资格说明、只读环境诊断与可选用户配置修复，不保证防封。操作说明真源为 `RUNBOOK.md`，运行行为以脚本为准。
-- 六个入口：`prep-registration.ps1`（只读预检）、`Get-SurfaceReport.ps1`（只读环境画像；默认不联网、不写文件，出口检查须显式给出 HTTP 代理）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；切换默认预览；ToRelay 按操作者自备的仓外源文件切换；OfficialPreflight 隔离预检、LaunchOfficial 显式启动）。
+- 七个入口：`prep-registration.ps1`（只读预检）、`Get-SurfaceReport.ps1`（只读环境画像；默认不联网、不写文件，出口检查须显式给出 HTTP 代理）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`start-claude-chrome-leakless.cmd`（同一 profile，额外封堵 WebRTC 非代理 UDP）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；切换默认预览；ToRelay 按操作者自备的仓外源文件切换；OfficialPreflight 隔离预检、LaunchOfficial 显式启动）。
 - CPA 部署、目录、运行防护与远端维护保留在 `D:\CODE\vps-ssh-launcher`；skills-manager 保留通用技能/MCP 管理，不复制为本仓运行代码。
 
 ## A. 不变量
-- 实际所在地与主体资格按官方政策核对；代理出口、时区、语言、指纹或检测分数不代替资格。不自动注册、登录、调用模型或改动时区、凭据及设备标识；不为评分或规避改区域、字体、UA 或 WebRTC 策略，启动器不得加入身份或网络强制参数（由 `qa/test-tools.ps1` 断言）。
+- 实际所在地与主体资格按官方政策核对；代理出口、时区、语言、指纹或检测分数不代替资格。不自动注册、登录、调用模型或改动时区、凭据及设备标识；不为评分或规避伪装身份（不改区域、字体、UA、device ID 或会话数据）。启动器只允许封堵非代理 UDP 泄漏：默认入口不含身份或网络强制参数，唯一例外是显式可选入口 `start-claude-chrome-leakless.cmd`，逐条由 `qa/test-tools.ps1` 断言。
 - 无固定出口默认值；出口检查须显式选择 HTTP/HTTPS 代理，只证明诊断请求当时的出口，不证明其他客户端、账号或未来路由。
 - 不注册自动 hook；SessionStart 的 exit 2 不阻断会话或模型请求。历史 hook 只按精确路径与已知命令形式移除，保留未知命令及其他配置。
 - 官方进程入口只清理其子进程中的认证、配置目录、provider、模型覆盖和 TLS 验证关闭变量，保留代理/CA 与父进程；启动前须匹配官方模板、无 key helper 且 CC Switch 未运行。CLI 仅加载 user settings，managed 设置仍生效；不把此隔离外推到 Desktop 或真实出口。

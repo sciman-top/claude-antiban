@@ -6,6 +6,9 @@ param(
   [switch]$CheckExitIp,
   [string]$ExpectedIp = '',
   [string]$Proxy = '',
+  [switch]$CheckUdpLeak,
+  [string]$StunServer = 'stun.l.google.com',
+  [int]$StunPort = 19302,
   [string]$RepoRoot = $PSScriptRoot
 )
 $ErrorActionPreference = 'Stop'
@@ -20,22 +23,61 @@ function Get-FontPresence([string]$Directory, [string[]]$Patterns) {
   return 'False'
 }
 
+function Get-MaskedAddress([string]$Address) {
+  if ($Address -match '^(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}$') { return ($Matches[1] + '.x.x') }
+  return 'unavailable'
+}
+
+# A STUN binding request over non-proxied UDP (RFC 5389) shows the public address
+# this host would offer on a path that ignores the configured proxy. It measures
+# the host precondition, not the browser policy that decides whether WebRTC uses it.
+function Get-StunMappedAddress([string]$Server, [int]$Port) {
+  $cookie = [byte[]]@(0x21, 0x12, 0xA4, 0x42)
+  $request = New-Object byte[] 20
+  $request[1] = 1
+  [Array]::Copy($cookie, 0, $request, 4, 4)
+  $transactionId = New-Object byte[] 12
+  ([Random]::new()).NextBytes($transactionId)
+  [Array]::Copy($transactionId, 0, $request, 8, 12)
+  $client = [Net.Sockets.UdpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
+  $client.Client.ReceiveTimeout = 4000
+  try {
+    $client.Connect($Server, $Port)
+    [void]$client.Send($request, 20)
+    $endpoint = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
+    $response = $client.Receive([ref]$endpoint)
+  } catch { return '' } finally { $client.Dispose() }
+  $offset = 20
+  while ($offset + 4 -le $response.Length) {
+    $type = ($response[$offset] -shl 8) -bor $response[$offset + 1]
+    $length = ($response[$offset + 2] -shl 8) -bor $response[$offset + 3]
+    if ($type -eq 0x0020 -and $length -ge 8) {
+      return ((@(0..3 | ForEach-Object { $response[$offset + 8 + $_] -bxor $cookie[$_] })) -join '.')
+    }
+    $offset += 4 + $length + ((4 - ($length % 4)) % 4)
+  }
+  return ''
+}
+
 $timeZone = Get-TimeZone
 Write-Output ('TIMEZONE=' + $timeZone.Id + ' utc_offset=' + $timeZone.BaseUtcOffset)
 Write-Output ('OS_LOCALE=' + [Globalization.CultureInfo]::CurrentCulture.Name + ' ui_locale=' + [Globalization.CultureInfo]::CurrentUICulture.Name)
 Write-Output ('OS=' + [Environment]::OSVersion.VersionString)
 Write-Output ('EAST_ASIAN_FONTS_PRESENT=' + (Get-FontPresence (Join-Path $env:WINDIR 'Fonts') @('msyh*', 'msjh*', 'simsun*', 'simhei*', 'mingliu*')))
 
-# Launcher flags are read from the script that actually starts the browser, so a
+# Launcher flags are read from the scripts that actually start the browser, so a
 # later edit cannot silently add identity or network flags without showing up here.
-$launcherPath = Join-Path $RepoRoot 'start-claude-chrome.cmd'
-$launcherFlags = @()
-if (Test-Path -LiteralPath $launcherPath -PathType Leaf) {
-  $launcherText = Get-Content -Raw -LiteralPath $launcherPath
-  $launcherFlags = @([regex]::Matches($launcherText, '(?<![\w-])--([a-z0-9][a-z0-9-]*)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
-  if ($launcherFlags.Count -eq 0) { $launcherFlags = @('none') }
-  Write-Output ('LAUNCHER=start-claude-chrome.cmd flags=' + ($launcherFlags -join ','))
-} else { Write-Output 'LAUNCHER=absent' }
+$launcherFiles = @(Get-ChildItem -LiteralPath $RepoRoot -Filter 'start-claude-chrome*.cmd' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+$allLauncherFlags = @()
+if ($launcherFiles.Count -eq 0) { Write-Output 'LAUNCHER=absent' }
+foreach ($launcherFile in $launcherFiles) {
+  $launcherText = Get-Content -Raw -LiteralPath $launcherFile.FullName
+  $flags = @([regex]::Matches($launcherText, '(?<![\w-])--([a-z0-9][a-z0-9-]*)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+  $allLauncherFlags += $flags
+  Write-Output ('LAUNCHER=' + $launcherFile.Name + ' flags=' + $(if ($flags.Count -eq 0) { 'none' } else { $flags -join ',' }))
+}
+$sealingLaunchers = @($launcherFiles | Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match 'force-webrtc-ip-handling-policy=disable_non_proxied_udp' } | ForEach-Object { $_.Name })
+Write-Output ('WEBRTC_NON_PROXIED_UDP=' + $(if ($sealingLaunchers.Count -gt 0) { 'sealed-by-launcher ' + ($sealingLaunchers -join ',') } else { 'allowed (chrome default; no launcher sets a WebRTC policy)' }))
 
 $preferencesPath = Join-Path $RepoRoot 'chrome-data/Default/Preferences'
 if (Test-Path -LiteralPath $preferencesPath -PathType Leaf) {
@@ -48,7 +90,7 @@ if (Test-Path -LiteralPath $preferencesPath -PathType Leaf) {
   } catch { Write-Output 'BROWSER_PROFILE=present preferences=unreadable' }
 } else { Write-Output 'BROWSER_PROFILE=absent; run start-claude-chrome.cmd once to create it' }
 
-Write-Output ('BROWSER_PROXY_SOURCE=' + $(if ($launcherFlags -contains 'proxy-server') { 'launcher-flag' } else { 'system-setting (launcher passes no --proxy-server)' }))
+Write-Output ('BROWSER_PROXY_SOURCE=' + $(if ($allLauncherFlags -contains 'proxy-server') { 'launcher-flag' } else { 'system-setting (no launcher passes --proxy-server)' }))
 
 # Proxy configuration is reported as a state and a scope, never as a value: the
 # tracked documentation must not carry this machine's infrastructure details.
@@ -76,6 +118,16 @@ Write-Output ('PROXY_ENV_PRESENT=' + ($scopeStates -join ' '))
 
 Write-Output 'SURFACE_SOURCE=host, locale, font and proxy facts come from the installed Windows environment and the browser profile; the launcher only isolates browser data.'
 Write-Output 'SCORE_NOTE=third-party risk scores are not eligibility, safety or account acceptance.'
+
+if ($CheckUdpLeak) {
+  if ($StunPort -lt 1 -or $StunPort -gt 65535) { [Console]::Error.WriteLine('Supply a UDP port between 1 and 65535.'); exit 3 }
+  $mappedAddress = Get-StunMappedAddress -Server $StunServer -Port $StunPort
+  if (-not $mappedAddress) {
+    Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=none; no non-proxied UDP answer observed")
+  } else {
+    Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=yes mapped=" + (Get-MaskedAddress $mappedAddress) + '; host path only, browser policy is reported above')
+  }
+} else { Write-Output 'UDP_PROBE=not-requested' }
 
 if ($CheckExitIp) {
   & (Join-Path $PSScriptRoot 'hooks/check-exit-ip.ps1') -CheckExitIp -ExpectedIp $ExpectedIp -Proxy $Proxy

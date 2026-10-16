@@ -107,6 +107,8 @@ elseif($Mode -eq 'retired') { & $Script }
 elseif($Mode -eq 'surface') { & $Script -RepoRoot $RepoRoot }
 elseif($Mode -eq 'surface-no-proxy') { & $Script -RepoRoot $RepoRoot -CheckExitIp }
 elseif($Mode -eq 'surface-exit') { & $Script -RepoRoot $RepoRoot -CheckExitIp -ExpectedIp '203.0.113.9' -Proxy 'http://127.0.0.1:1' }
+elseif($Mode -eq 'surface-leak') { & $Script -RepoRoot $RepoRoot -CheckUdpLeak -StunServer '127.0.0.1' -StunPort 1 }
+elseif($Mode -eq 'surface-leak-invalid') { & $Script -RepoRoot $RepoRoot -CheckUdpLeak -StunPort 0 }
 else { & $Script -CheckExitIp -ExpectedIp $(if($Mode -eq 'mismatch'){'203.0.113.10'}else{'203.0.113.9'}) -Proxy 'http://127.0.0.1:1' }
 exit $LASTEXITCODE
 '@)
@@ -290,8 +292,15 @@ try {
     $r=Run $mock @('-Script',(Join-Path $repo 'prep-registration.ps1'),'-Mode','default','-SettingsPath',$settings) $processVars
     Assert ($r.Code -eq 0 -and $r.Text.Contains('USER_SETTINGS=absent') -and $r.Text.Contains('ANTHROPIC_BASE_URL settings_present=False process_present=True')) $r.Text
     Assert (-not $r.Text.Contains('process-secret-fixture')) 'Preflight leaked process values when settings are absent'
+    # Boundary: the default entry stays free of identity and network flags; the opt-in
+    # entry may add only the documented WebRTC IP handling policy that keeps WebRTC
+    # media from leaving through non-proxied UDP, and must reuse the same profile.
     $launcher=Get-Content -Raw -LiteralPath (Join-Path $repo 'start-claude-chrome.cmd')
-    Assert ($launcher -notmatch '--(proxy-server|lang|force-webrtc|disable-webrtc|user-agent|accept-lang)') 'Launcher still forces identity/network flags'
+    Assert ($launcher -notmatch '--(proxy-server|lang|force-webrtc|disable-webrtc|user-agent|accept-lang|dns-over-https)') 'Default launcher still forces identity/network flags'
+    $leakless=Get-Content -Raw -LiteralPath (Join-Path $repo 'start-claude-chrome-leakless.cmd')
+    Assert ($leakless -match '--force-webrtc-ip-handling-policy=disable_non_proxied_udp') 'Leakless entry lost its WebRTC IP handling policy'
+    Assert ($leakless -notmatch '--(proxy-server|lang|user-agent|accept-lang|disable-webrtc|dns-over-https|force-webrtc-ip-handling-policy=(?!disable_non_proxied_udp))') 'Leakless entry carries flags beyond the documented WebRTC policy'
+    Assert ($leakless.Contains('--user-data-dir="%~dp0chrome-data"')) 'Leakless entry must reuse the same isolated profile'
   }
   Case 'surface report is read-only, local-only and prints no infrastructure values' {
     # The report exists so a third-party score can be attributed to host, browser or
@@ -303,6 +312,9 @@ try {
     [IO.File]::WriteAllText((Join-Path $surfaceRoot 'start-claude-chrome.cmd'),
       "@echo off`r`nstart `"`" `"chrome.exe`" --user-data-dir=`"%~dp0chrome-data`" --no-first-run `"https://claude.ai`"`r`n",
       [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $surfaceRoot 'start-claude-chrome-leakless.cmd'),
+      "@echo off`r`nstart `"`" `"chrome.exe`" --user-data-dir=`"%~dp0chrome-data`" --no-first-run --force-webrtc-ip-handling-policy=disable_non_proxied_udp `"https://claude.ai`"`r`n",
+      [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $surfaceProfile 'Preferences'),
       '{"intl":{"selected_languages":["en-US","en"],"accept_languages":"en-US,en"},"webrtc":{"ip_handling_policy":"disable_non_proxied_udp"}}',
       [Text.UTF8Encoding]::new($false))
@@ -310,6 +322,8 @@ try {
     $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface','-RepoRoot',$surfaceRoot)
     Assert ($r.Code -eq 0) $r.Text
     Assert ($r.Text -match '(?m)^LAUNCHER=start-claude-chrome\.cmd flags=user-data-dir,no-first-run\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^LAUNCHER=start-claude-chrome-leakless\.cmd flags=user-data-dir,no-first-run,force-webrtc-ip-handling-policy\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^WEBRTC_NON_PROXIED_UDP=sealed-by-launcher start-claude-chrome-leakless\.cmd\r?$') $r.Text
     Assert ($r.Text -match '(?m)^BROWSER_PROFILE=present languages=en-US,en\r?$') $r.Text
     Assert ($r.Text -match '(?m)^WEBRTC_POLICY_OVERRIDE=present\r?$') $r.Text
     Assert ($r.Text -match '(?m)^EAST_ASIAN_FONTS_PRESENT=(True|False|unavailable)\r?$') $r.Text
@@ -324,6 +338,13 @@ try {
     Assert ($r.Code -eq 3) "Surface exit check without an explicit proxy returned $($r.Code): $($r.Text)"
     $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-exit','-RepoRoot',$surfaceRoot)
     Assert ($r.Code -eq 0 -and $r.Text.Contains('OBSERVED_IP=203.0.113.9')) $r.Text
+    # The UDP probe stays off unless requested and reports the loopback no-answer path
+    # honestly, so the fixture never depends on external UDP reachability.
+    Assert ($r.Text -notmatch '(?m)^UDP_PROBE=stun\.l\.google\.com') 'Surface report probed UDP without being asked'
+    $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-leak','-RepoRoot',$surfaceRoot)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('UDP_PROBE=127.0.0.1:1 reply=none')) $r.Text
+    $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-leak-invalid','-RepoRoot',$surfaceRoot)
+    Assert ($r.Code -eq 3) "Surface UDP probe accepted an invalid port: $($r.Code): $($r.Text)"
   }
   Case 'lane status is read-only and classifies the relay form' {
     Write-Settings $relayText; $before = Hash $settings; $journalBefore = Hash $journal

@@ -13,6 +13,12 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 - 用 CPA 或任何网关代持、中转 Free/Pro/Max 订阅凭据，或用第三方客户端伪装成 Claude Code。
 - 创建多账号或换号规避封禁，或以“测试风险”为目的注册账号再观察是否被停用。
 
+判据是“是否伪装或伪造身份”。本仓不伪装身份，但会封堵已配置出口的泄漏：唯一例外是
+`start-claude-chrome-leakless.cmd`，它只把 Chrome 的 WebRTC IP 处理策略设为 Chromium 的
+`WebRtcIPHandling=disable_non_proxied_udp`（RFC 8828 第 5.2 节模式 4），使 WebRTC 媒体不能经
+非代理 UDP 绕过你已经配置的代理；它不改语言、时区、字体、UA、device ID 或会话数据，
+也不降低账号风险或影响资格判断。
+
 这些动作命中 Anthropic Usage Policy 的 `Do Not Abuse Our Platform` 段落。资格判断与
 两个分支的具体动作见 [RUNBOOK.md](RUNBOOK.md) 第 1 节与第 8 节。
 
@@ -24,6 +30,7 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 | `Get-SurfaceReport.ps1` | 只读环境画像报告（系统区域/字体/浏览器 profile/代理来源） | 默认不联网、不写文件；出口检查须显式给出 HTTP 代理 |
 | `hooks/check-exit-ip.ps1` | 手动出口诊断 | 须显式给出预期出口与代理 |
 | `start-claude-chrome.cmd` | 普通独立 profile 启动专用浏览器 | 继承正常网络配置 |
+| `start-claude-chrome-leakless.cmd` | 同一 profile 的显式可选启动 | 额外设置 WebRTC IP 处理策略，封堵非代理 UDP |
 | `install.ps1` | 用户配置修复 | 默认预览，`-Apply` 才写机器 |
 | `Set-ClaudeLane.ps1` | lane 切换、隔离的官方进程预检与显式启动 | 默认只读 status |
 

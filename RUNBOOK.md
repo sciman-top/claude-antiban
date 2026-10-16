@@ -29,7 +29,7 @@
 | Windows 系统 | 使用真实日常语言、时区；保持系统、官方客户端及证书更新 | 修改区域设置不取得资格；不需要伪装“美国机器” |
 | 指纹 | 不安装所谓防检测浏览器或指纹清洗工具，不伪造 device ID、UA 或会话状态 | 没有官方公开的安全指纹阈值，社区个案不能提供防封参数 |
 | 代理/TLS | 明确每个进程的代理来源，保留 TLS 验证，排查旧端点和异常重试 | 稳定连接只减少网络错误；固定/住宅 IP、第三方评分不保证安全 |
-| 浏览器 | 官方站点和正常浏览器；可用独立 profile 隔离工作数据，扩展按实际需要最小化 | profile 是数据隔离；不能证明 DNS、IPv6、WebRTC 全部无泄漏 |
+| 浏览器 | 官方站点和正常浏览器；可用独立 profile 隔离工作数据，扩展按实际需要最小化 | profile 是数据隔离；需要封堵 WebRTC 非代理 UDP 时用 `start-claude-chrome-leakless.cmd`，DNS 与出口仍由代理客户端决定 |
 | Claude Code | 官方发行和认证流程；区分订阅、API key、网关凭据，检查配置作用域 | 变量存在不等于生效，更不等于账号获准使用 |
 | Claude Desktop | 区分普通聊天、Code 标签页、Cowork 与 provider 连接模式 | 不能把 CLI 的 shell 环境或 apiKeyHelper 规则套到整个 Desktop |
 | 远端 CPA | 保持现有部署边界，不导入个人 Claude 订阅 OAuth | 本仓不部署、登录、修改或重启远端 |
@@ -90,6 +90,8 @@ pwsh -NoProfile -File .\hooks\check-exit-ip.ps1 -CheckExitIp -Proxy http://127.0
 pwsh -NoProfile -File .\Get-SurfaceReport.ps1
 # 需要出口诊断时显式给出 HTTP 代理；其余参数与 check-exit-ip.ps1 相同
 pwsh -NoProfile -File .\Get-SurfaceReport.ps1 -CheckExitIp -Proxy http://127.0.0.1:10808
+# 可选：向 STUN 服务发一个非代理 UDP 绑定请求，判断本机是否存在可被利用的泄漏路径
+pwsh -NoProfile -File .\Get-SurfaceReport.ps1 -CheckUdpLeak
 ```
 
 输出只报状态与来源，不打印系统代理取值，也不写 `machine-journal.md`；
@@ -98,6 +100,13 @@ pwsh -NoProfile -File .\Get-SurfaceReport.ps1 -CheckExitIp -Proxy http://127.0.0
 `start-claude-chrome.cmd` 只启动官方 Chrome 的独立 `chrome-data/`；
 继承浏览器正常网络配置，不强设代理、语言、时区或 WebRTC。
 启动前先判断使用资格。已有 profile 继续保留，回滚不得删除 cookie 或会话数据。
+
+`start-claude-chrome-leakless.cmd` 是同一 profile 的显式可选入口：它额外把 Chrome 的
+WebRTC IP 处理策略设为 `disable_non_proxied_udp`（Chromium 策略 `WebRtcIPHandling` 的取值，
+RFC 8828 第 5.2 节模式 4“强制走代理”），使 WebRTC 媒体不能经非代理 UDP 绕过代理。
+它不伪装语言、时区、字体、UA、device ID 或会话数据，也不改变资格判断与账号风险；
+代价是依赖 UDP 的实时音视频可能降级或失败。同一 profile 已有实例在运行时 Chrome 会忽略
+新开关，必须完全关闭浏览器后再用该入口启动。
 
 ## 4. 配置修复：预览、备份、读回
 
@@ -272,6 +281,14 @@ issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接�
 | 出口国家、数据中心/云厂商、IP 情报一致性 | 代理出口本身 | 固定或住宅出口、第三方评分不保证安全（第 2 节） |
 | 浏览器语言、UA/Client Hints | 浏览器 profile 与版本 | 独立 profile 只隔离数据；不为评分改语言或 UA |
 
+2026-10-16 本机实测归因（不含具体地址）：对三个公共 STUN 服务发送非代理 UDP 绑定请求
+均收到响应，返回的是本地 ISP 公网地址而非代理出口地址，即 RFC 8828 第 3 节描述的
+“VPN 出口与底层 ISP 地址同时暴露”。可用 `Get-SurfaceReport.ps1 -CheckUdpLeak` 复现。
+`start-claude-chrome-leakless.cmd` 只封堵浏览器一侧；PowerShell 等其它客户端仍会走非代理 UDP。
+解析器所在位置由代理客户端的 DNS 与路由模式决定，本仓不读取也不改写该配置；
+`claude.ai` 经出口返回 Cloudflare `403 / Cf-Mitigated: challenge` 而 `www.anthropic.com`
+返回 200，说明链路可达但受出口 IP 信誉影响，浏览器开关不能修复该现象，换出口也不保证命中。
+
 `Get-SurfaceReport.ps1` 输出上表“事实来源”一列对应的本机事实：它不访问评分站点，
 不打印系统代理取值，也不改变任何设置。降低分数不是本仓目标。
 
@@ -374,6 +391,8 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
 - 不实施、本仓也不实现这些动作：改时区或区域设置伪装所在地；安装防检测浏览器或指纹清洗工具；
   伪造 device ID、UA 或会话状态；用代理、住宅出口或 VPS 把所在地替换为受支持地区；
   用 CPA 或其他网关代持、中转订阅凭据；创建多账号或换号；以“测试风险”为目的注册账号后再观察。
+  判据是“伪装或伪造身份”，不包含“封堵已配置出口的泄漏”：`start-claude-chrome-leakless.cmd`
+  只做后者，它同样不改变第 1 节的资格判断与本节结论。
 - 与上述边界相关的 Usage Policy `Do Not Abuse Our Platform` 条款包括：
   “Access, facilitate, or provide others (including end users) with access to our products or
   services in violation of our Supported Regions Policy”；
