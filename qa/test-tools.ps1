@@ -229,6 +229,18 @@ try {
     Assert ($r.Code -eq 0 -and $r.Text.Contains('APPLIED') -and (Hash $settings) -eq $script:relayBeforeHash) $r.Text
     Assert (@(Get-ChildItem $root -Filter '*.bak-claude-lane-*').Count -eq 2) 'Rollback lane backup missing'
   }
+  Case 'variant placeholder projects the current profile instead of a literal path' {
+    Write-Settings $relayText
+    [IO.File]::WriteAllText($variant, '{"statusLine":{"command":"node %USERPROFILE%/.claude/plugin.js","type":"command"}}', [Text.UTF8Encoding]::new($false))
+    $r = Lane @('-ToOfficial','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $projected = Get-Content -Raw -LiteralPath $settings
+    $profile = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\','/')
+    Assert ($projected.Contains("node $profile/.claude/plugin.js")) $projected
+    Assert (-not $projected.Contains('%USERPROFILE%')) 'Placeholder was projected literally'
+    [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
+    Write-Settings $relayText
+  }
   Case 'tracked files carry no raw infrastructure identifiers' {
     # Regression barrier for the 2026-10-15 leaks: a real egress IP, hostname,
     # user path, proxy provider or endpoint domain must never reach a tracked
@@ -245,7 +257,9 @@ try {
         foreach ($match in [regex]::Matches($text, '(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])')) {
           if (@($documentedOnly | Where-Object { $match.Value -match $_ }).Count -eq 0) { $found.Add("$relative ip=$($match.Value)") }
         }
-        if ($text -match '[A-Za-z]:\\Users\\(?!<USER>)') { $found.Add("$relative user-path") }
+        # Either separator: a real forward-slash user path was published once, which a
+        # backslash-only pattern missed.
+        if ($text -match '(?i)(?:[A-Za-z]:)?[\\/]Users[\\/](?!<USER>)') { $found.Add("$relative user-path") }
         if ($text.Contains([Environment]::MachineName)) { $found.Add("$relative hostname") }
         foreach ($literal in $bannedLiterals) {
           if ($text.IndexOf($literal, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $found.Add("$relative provider=$literal") }

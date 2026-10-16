@@ -83,7 +83,12 @@ if ($RollbackBackup) {
   $beforeBytes = [IO.File]::ReadAllBytes($settings)
   $beforeHash = Get-Hash $beforeBytes
   $beforeJson = Read-Json $beforeBytes
-  $afterBytes = [IO.File]::ReadAllBytes(([IO.Path]::GetFullPath($VariantPath)))
+  # The in-repo variant stays portable: it carries %USERPROFILE% instead of a real
+  # user path, so it is correct on any machine and the repo never stores a username.
+  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw '%USERPROFILE% is not set; cannot project the official variant.' }
+  $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
+  $variantText = [IO.File]::ReadAllText(([IO.Path]::GetFullPath($VariantPath))).Replace('%USERPROFILE%', $profilePath)
+  $afterBytes = [Text.UTF8Encoding]::new($false).GetBytes($variantText)
   $afterHash = Get-Hash $afterBytes
   $null = Read-Json $afterBytes
   if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the official variant)'; exit 0 }

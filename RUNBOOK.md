@@ -136,6 +136,7 @@ pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>'
 无参数调用只输出只读 status；lane 切换是本机配置管理，不影响第 1 节的资格判断。
 
 - 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
+- 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
 - 仅接受已识别 relay 形态或与模板字节一致的现状；未识别配置直接拒绝，保留人工审查。
 - cc-switch 等会重写 settings.json 的工具运行中时拒绝执行。
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
