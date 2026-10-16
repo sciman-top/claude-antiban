@@ -1,0 +1,271 @@
+# Claude 使用资格、环境诊断与配置修复
+
+**修订：2026-10-16。** 本仓历史名称为 claude-antiban；工具用于减少配置错误，没有防封保证。
+旧文档中的“固定机房 IP 最优”“改美国时区”“无泄漏”“订阅 OAuth 接入 CPA”等结论已撤回。
+历史机器日志只记录当时操作，不再作为安全或当前部署状态证明。
+
+## 1. 注册或登录前先判断资格
+
+先读 [Supported Regions Policy](https://www.anthropic.com/legal/supported-regions)、
+[Consumer Terms](https://www.anthropic.com/legal/consumer-terms) 和
+[Usage Policy](https://www.anthropic.com/legal/aup)。
+
+- 按**实际所在地**与主体的注册地、总部及控制关系判断资格，不能用代理的所在地替换。
+  中国大陆不在本次核对的支持名单；实际仍在中国大陆的个人，不应据此工具开始注册或登录。
+  若官方政策或实际情况改变，重新核对；授权云渠道也有自己的准入条件，并不自动消除地区限制。
+- 使用真实、准确且本人有权使用的账号和付款信息，按当前官方验证流程办理。
+  不购买来历不明账号、借用身份、用接码或换号规避限制；不共享订阅凭据。
+- 误判、停用或拒绝访问时保存脱敏错误、时间和请求 ID，通过
+  [官方警告与申诉说明](https://support.claude.com/en/articles/8241253-safeguards-warnings-and-appeals)
+  处理；不通过清设备标识或新号重试来验证“是否解封”。
+
+本地预检输出 `ELIGIBILITY=not-determined`，不会根据 IP 自动签发“允许使用”结论。
+
+## 2. 每个环境要检查什么
+
+| 环境 | 建议与检查 | 证据边界 |
+| --- | --- | --- |
+| Windows 系统 | 使用真实日常语言、时区；保持系统、官方客户端及证书更新 | 修改区域设置不取得资格；不需要伪装“美国机器” |
+| 指纹 | 不安装所谓防检测浏览器或指纹清洗工具，不伪造 device ID、UA 或会话状态 | 没有官方公开的安全指纹阈值，社区个案不能提供防封参数 |
+| 代理/TLS | 明确每个进程的代理来源，保留 TLS 验证，排查旧端点和异常重试 | 稳定连接只减少网络错误；固定/住宅 IP、第三方评分不保证安全 |
+| 浏览器 | 官方站点和正常浏览器；可用独立 profile 隔离工作数据，扩展按实际需要最小化 | profile 是数据隔离；不能证明 DNS、IPv6、WebRTC 全部无泄漏 |
+| Claude Code | 官方发行和认证流程；区分订阅、API key、网关凭据，检查配置作用域 | 变量存在不等于生效，更不等于账号获准使用 |
+| Claude Desktop | 区分普通聊天、Code 标签页、Cowork 与 provider 连接模式 | 不能把 CLI 的 shell 环境或 apiKeyHelper 规则套到整个 Desktop |
+| 远端 CPA | 保持现有部署边界，不导入个人 Claude 订阅 OAuth | 本仓不部署、登录、修改或重启远端 |
+
+### 代理与配置作用域
+
+[Claude Code 网络配置](https://code.claude.com/docs/en/network-config)：
+CLI 支持 HTTP/HTTPS 代理，不支持 SOCKS 代理。不要把 SOCKS 端口误填为 HTTP；
+不要通过关闭证书验证来“修复”TLS。代理 URI 不写用户名、密码或 token。
+
+分别核对 Process / User / Machine 的 HTTP_PROXY、HTTPS_PROXY、NO_PROXY，
+以及 managed、user、project、local settings 和实际启动器。旧终端、GUI 或后台进程
+可能保留原环境；端口监听和一次 PowerShell 请求不能证明 CLI 的实际路由。
+预检仅报告 user settings 与当前进程中的相关键是否存在，不读取凭据文件或打印值，
+也不覆盖以上所有作用域。
+
+避免网络故障期间无意义的重复发送和并发；遇到 429 遵守产品限额与 Retry-After，
+不承诺固定几小时自动恢复。认证拒绝或明确停用时停止账号探测，先辨别错误并走官方支持。
+
+对于 **Desktop 管理 provider 连接的会话**（如某些第三方 provider Code 标签页和 Cowork），
+官方规定 Code 仅从 managed settings 与 `~/.claude/settings.json` 读取代理及相关 TLS 变量。
+不能认为 shell export、项目设置或系统代理必然覆盖这些会话。
+普通 Desktop 聊天的网络行为应单独核对，不把 CLI 的 apiKeyHelper 视作其配置入口。
+
+### 订阅与网关的区别
+
+[Claude Code 合规说明](https://code.claude.com/docs/en/legal-and-compliance)限制第三方代持、
+中转 Claude.ai 订阅凭据；本部署不采纳 CPA 代持 Free/Pro/Max OAuth 给其他客户端的路径。
+
+[Subscriptions and gateways](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways)
+同时说明：仅设置 ANTHROPIC_BASE_URL 不会替换已保存的官方 Code 订阅认证；
+网关凭据或 apiKeyHelper 生效后则改用该凭据，订阅额度不适用。
+不能仅因 BASE_URL 非空就断言凭据共享，也不能据此认为 CPA 代持令牌被认可。
+
+## 3. 本仓工具：默认不联网、不改配置
+
+所有 PowerShell 命令使用 PS7（最低 7.3），在本仓目录执行。
+
+```powershell
+# 只读：当前时区、用户设置有效性、敏感配置键存在性；不登录、不调用模型
+pwsh -NoProfile -File .\prep-registration.ps1
+
+# 可选：仅诊断指定 HTTP 代理的出口，会联系第三方 api.ipify.org
+pwsh -NoProfile -File .\hooks\check-exit-ip.ps1 -CheckExitIp -Proxy http://127.0.0.1:10808
+# 需要比对时由操作者显式提供 -ExpectedIp，不预设“安全出口”
+```
+
+诊断返回值：观察/比对成功 `0`；与指定 IP 不同 `2`；失败、无效响应或参数不足 `3`。
+未传 CheckExitIp 时 `0 / NOT_CHECKED`，**不代表检查通过**。
+预检的旧 `-Restore` 参数仅提示退出，不修改或恢复时区。
+若旧脚本曾改过时区，请在 Windows 设置中人工核对并按真实日常使用需求恢复；
+新脚本不猜测原值。
+
+`start-claude-chrome.cmd` 只启动官方 Chrome 的独立 `chrome-data/`；
+继承浏览器正常网络配置，不强设代理、语言、时区或 WebRTC。
+启动前先判断使用资格。已有 profile 继续保留，回滚不得删除 cookie 或会话数据。
+
+## 4. 配置修复：预览、备份、读回
+
+`install.ps1` 不再注册任何自动 hook。官方
+[hooks 文档](https://code.claude.com/docs/en/hooks)规定 SessionStart 的 exit 2
+为非阻断错误，会话仍可继续；旧 hook 不是请求防火墙，故不升级为其他自动 hook。
+
+安装器要求官方客户端已有有效 JSON 用户设置；不会创建账号或初始化凭据。
+一次只运行一个写入器；避免客户端、配置同步工具同时保存同一文件。
+仅处理本仓已知命令形式和精确脚本绝对路径，未知 wrapper、参数、相对路径或其他路径一律保留供人工核对。
+
+```powershell
+# 移除旧 SessionStart action；默认仅预览
+pwsh -NoProfile -File .\install.ps1 -RemoveLegacyHook
+pwsh -NoProfile -File .\install.ps1 -RemoveLegacyHook -Apply
+
+# 可选：操作者明确选择代理时，补齐两个缺失 env 键；不改遥测
+pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:10808
+# 确认预览后，同命令加 -Apply
+```
+
+已有代理值不同或同名键出现多种大小写时拒绝写入；相同值保留原键名。
+其他 env、permissions、hook action/group/event 全部保留；空的本仓 hook 容器才移除。
+无修改则不写文件、不建备份、不写日志，也不联网。
+
+Apply 将候选 JSON 写入同目录临时文件，校验后原子替换；
+`settings.json.bak-claude-env-<GUID>` 保存被替换文件的原始字节。
+`machine-journal.md` 记录操作、备份路径、前后 SHA256 与准备/读回阶段。
+出现 prepared 但没有 applied-readback-verified 时必须检查现场，不能把 prepared 当成功。
+替换前检查漂移，替换后校验实际备份和读回；这不等于跨进程 CAS。
+检测到并发或发布后错误时保留备份并报错，不自动覆盖更新的设置。
+
+### 精确回滚
+
+先从本次 APPLIED 输出/日志取备份路径和 after_sha256；当前文件如已变化则拒绝恢复。
+
+```powershell
+pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>' -ExpectedCurrentHash '<本次 after_sha256>'
+# 确认预览后，同命令加 -Apply；恢复本身也创建新备份和日志
+```
+
+备份含用户配置，应限制在本机并按自己的备份策略保管。
+不要删除整个 hooks 键，不要批量清理凭据或直接覆盖后来修改。
+
+### Claude Code lane 切换（中继 ↔ 官方）
+
+`Set-ClaudeLane.ps1` 管理 `~/.claude/settings.json` 在已识别中继形态（env 含
+`ANTHROPIC_BASE_URL`）与本仓模板 `settings.official-anthropic.json` 之间的整文件切换。
+无参数调用只输出只读 status；lane 切换是本机配置管理，不影响第 1 节的资格判断。
+
+- 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
+- 仅接受已识别 relay 形态或与模板字节一致的现状；未识别配置直接拒绝，保留人工审查。
+- cc-switch 等会重写 settings.json 的工具运行中时拒绝执行。
+- 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
+  回滚与上一节同款哈希钉死流程。
+
+```powershell
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1                      # 只读 status
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial          # 预览
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial -Apply   # 切换 + 备份 + 日志
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -RollbackBackup '<APPLIED 输出的备份绝对路径>' -ExpectedCurrentHash '<after_sha256>'
+```
+
+历史注记：2026-10-16 前本工具曾以机器侧副本（`~/.claude/scripts/Set-ClaudeLane.ps1`、
+`~/.claude/settings.official-anthropic.json` 与桌面快捷方式）运行；现已收编入仓并退役
+机器副本，专用浏览器统一为 `start-claude-chrome.cmd`。旧 `~/.claude/settings-backups/`
+内 `bak-lane-*` 是退役工具的历史字节备份，仅人工核对使用，不纳入本工具回滚。
+
+### 第三方写入器（CC Switch）
+
+CC Switch（`~/.cc-switch/cc-switch.db`）切换 provider 时会重写 `~/.claude/settings.json`，
+其库内 `common_config_claude` 合并模板是随切换生效的第二条写入通道。CC Switch 运行期间
+不要手工编辑 settings.json，也不要执行 lane 切换或 install.ps1（两者对此 fail-closed）。
+
+2026-10-15 深夜本机一次人工修复（未走本仓写入器，动作/备份/验证/回滚见
+machine-journal 同日补记）：删除 claude-desktop 分组 3 个中继 provider 及其 endpoint；
+同批清洗 `common_config_claude` 模板中 DISABLE_LOGIN/LOGOUT/UPGRADE/EXTRA_USAGE_COMMAND
+锁定键、NONSTREAMING_FALLBACK/ATTRIBUTION_HEADER/MAX_OUTPUT_TOKENS/EFFORT_LEVEL 与顶层
+model 钉定。日后经 CC Switch 重建任何 claude 分组条目前，先核对条目与模板不含
+`ANTHROPIC_BASE_URL` 等中继 env，也不含上述锁定键；装 Claude Desktop 前同样检查其
+claude-desktop 分组与模板现状，不要凭旧结论假设仍为已清空状态。
+
+## 5. 社区反馈如何采用
+
+需要参考社区来找症状、版本差异与复现线索；官方政策、源码行为、个案推断分开记录。
+issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接等于封号。
+
+- [Claude Code #71581](https://github.com/anthropics/claude-code/issues/71581)：
+  Windows 内置运行时 TLS 症状，系统工具成功不证明客户端连接正常。
+- [Claude Code #87424](https://github.com/anthropics/claude-code/issues/87424)：
+  连接重置报告，可用于排障，不证明账号处罚。
+- [CPA #2211](https://github.com/router-for-me/CLIProxyAPI/issues/2211)：
+  用户报告订阅账号被禁用；不能据此归因于 IP、指纹或精确频率。
+- [CPA #5343](https://github.com/router-for-me/CLIProxyAPI/issues/5343)：
+  提问不足以证明因果或封号率。
+- CPA #2983 / #1803 / #1814 属 Google/Antigravity 语境，不外推为 Anthropic 规则。
+- [CPA #6395](https://github.com/router-for-me/CLIProxyAPI/issues/6395) 的代理说明须结合部署版本；
+  CPA 不以环境代理为受支持配置入口，管理请求与模型请求规则见下方部署文档。
+
+旧文档关于 .cn 域名、WAF 检测机制、号码地区、付款金额、养号等待期等说法缺少可靠因果证据，
+不再转化为操作建议。第三方“风险评分”网站不得收集账号凭据，其评分不作为资格或安全验收。
+
+## 6. 归宿与最低验收
+
+- 通用资格/环境/工具：本仓。skills-manager 中的通用管理功能继续由原项目维护。
+- CPA 运行代码和部署判据：相邻检出的
+  [CPA 接入风险](../vps-ssh-launcher/docs/runbooks/cpa-claude-account-risk.md)、
+  [CPA 网关](../vps-ssh-launcher/docs/runbooks/cpa-gateway.md)；不存在相邻仓时按所属项目单独查阅。
+- 不整仓复制，不复制浏览器数据、凭据、第三方源码或 CPA 运行实现。
+
+```powershell
+pwsh -NoProfile -File .\qa\test-tools.ps1
+git diff --check
+```
+
+fixture 验证配置保护、退出码及回滚，完全不访问外网。
+源码和 fixture 为 repo_verified；真实设置备份/读回仅为 filesystem_projected。
+本次不启动 Claude 新会话、不注册/登录、不发模型请求、不部署/重启 VPS。
+host_loaded 与 live_accepted 均需独立证据；在资格未解决前不通过真实账号试验来补齐。
+官方引用在 2026-10-15 核对，2026-10-16 再核对地区、网络、网关和 hook 关键行为；
+政策变化或出现具体新故障时再按对应症状复核社区，不安排无依据的压力试验。
+
+## 7. 本机留痕与新机迁移
+
+### 哪些内容随项目保存
+
+| 内容 | 保存位置与迁移方式 |
+| --- | --- |
+| 修复代码、配置意图、适用边界、验证和回滚方法 | 本仓脚本、本文和 Git 提交，随项目迁移 |
+| 已发生的机器配置变更 | `machine-journal.md` 按机器伪名和时间追加；自动写入含动作、备份路径、前后 SHA256 与读回阶段 |
+| 实际 settings、原字节备份、凭据、浏览器会话、代理订阅 | 各机器本地保管；不作为项目配置模板，不随代码投影 |
+| 客户端、系统代理、证书等安装器范围外状态 | 按新机实际情况核对；如人工修改，脱敏补记动作、验证、回滚及执行来源，不能冒称安装器已完成 |
+
+项目保存可复用方法和可追溯历史；每台机器的当前状态从现场读取。
+旧日志中的路径、端口、哈希及通过记录只对应原机器、原时点，不能继承为新机结论。
+日志不记录密码、token、cookie、授权 URL 或订阅地址，也不要记录出口 IP、浏览器/WebRTC
+环境结论、系统代理注册表状态等本机基建信息。机器标识写伪名 `<HOST-xxxxxxxx>`
+（机器名小写后的 SHA256 前 4 字节，`install.ps1` / `Set-ClaudeLane.ps1` 自动生成），
+备份路径中的用户名写 `%USERPROFILE%`，真实主机名、用户名与用户路径不入库。
+实际备份可能含敏感配置，仅留原机器。已跟踪内容不含上述标识；2026-10-16 推送公开远端前
+已改用脱敏副本重建单根历史，早期完整历史（含 2026-10-15 的出口 IP、代理链路与部署拓扑）
+仅存本机 bundle 备份，不得推送或外传；此后每次推送前仍须按本节核对新增 diff。
+append-only 指操作历史而言：历史条目里已经出现的凭据、订阅地址或本机基建信息，
+在对任何远端推送或对外分享前必须就地脱敏为 `<redacted>` 并在同条注明脱敏时间；
+这是唯一允许改写历史条目的情形。
+
+### 新机操作顺序
+
+1. 使用 Git 检出或离线 Git bundle 传递已跟踪代码；不要直接复制含 ignored 文件的整棵工作目录。
+   `chrome-data/`、`qa/throwaway/`、旧机用户目录及运行态文件不作为迁移输入。
+   新机目录和用户名可以不同，脚本通过自身目录和当前用户目录定位；本文命令均在新机项目根执行。
+2. 安装 PowerShell 7.3+ 及需要的官方客户端，核对实际使用资格。
+   重新核对新机代理软件、HTTP 端口、配置作用域和证书；不沿用旧机端口或出口的成功结论。
+   本地准备不要求注册、登录或发送模型请求。
+3. 先运行只读预检与无网 fixture：
+
+   ```powershell
+   pwsh -NoProfile -File .\prep-registration.ps1
+   pwsh -NoProfile -File .\qa\test-tools.ps1
+   ```
+
+4. 按新机实际需求决定是否投影。全新机器没有旧 hook、也不需要配置代理时，**可以不写任何设置**。
+   需要代理时明确提供新机实际 HTTP/HTTPS 地址，先预览，再对相同参数加 `-Apply`：
+
+   ```powershell
+   # 示例端口须换成新机已核实的 HTTP 代理端口
+   pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:10808
+   # 确认预览后执行，自动备份并追加该机器的新记录
+   pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:10808 -Apply
+   ```
+
+   安装器要求目标已有有效 JSON 用户设置；缺失时停止，先按官方支持的设置方式建立，
+   不通过复制旧机 settings、凭据或登录状态来满足前置条件。
+   若新机是系统克隆或项目换过目录，遗留 hook 可能指向旧绝对路径；安装器不会猜测其归属，
+   应先核对精确命令再人工处理。不要将整份 hooks 删除作为迁移步骤。
+5. 对实际写入检查新机日志的 `applied-readback-verified`、备份及 SHA256，
+   确认仅预期键变化；重复同一命令应返回 `NO_CHANGE`，不再写日志或备份。
+   回滚只能使用该新机此次写入的备份和当前哈希，不能使用旧机日志中的恢复参数。
+6. 文件读回只记为 `filesystem_projected`；客户端实际加载及真实使用分别验收。
+   资格未解决时停在本地准备，不通过真实账号试验来取得通过结论。
+
+仅迁移代码不代表完成新机投影，也不代表必须重做每项修改。
+本仓不会自动配置 Windows 系统代理、代理客户端、Desktop、凭据或远端 CPA；
+需要这些变更时先明确该机器的实际差异、操作范围和回滚方式。

@@ -1,0 +1,56 @@
+# 机器投影审计留痕（append-only）
+
+> 当前自动留痕范围为 `install.ps1 -Apply` 对用户设置的精确修复；范围与操作方法见 RUNBOOK.md。每台机器追加自己的动作、备份路径、前后 SHA256 与读回结果；预览和 NO_CHANGE 不写日志。以下历史操作保留，不能作为其他机器的配置模板或验收证据。
+>
+> 2026-10-15 的两条历史条目由早期写入器产生，记录了本机出口 IP、浏览器/系统代理环境结论等基建信息，只描述当时本机状态，不是使用资格或账号安全的证据；按 RUNBOOK.md 第 7 节，这类信息在对任何远端推送或对外分享前必须脱敏。脱敏必须覆盖 Git 历史：只改工作树不会把内容从提交历史里移除，所以对外传递要用脱敏后的副本，或先改写历史再推送。
+>
+> 机器标识一律写伪名 `<HOST-xxxxxxxx>`（机器名小写后的 SHA256 前 4 字节），由 `install.ps1` / `Set-ClaudeLane.ps1` 自动生成；备份路径中的用户名写 `%USERPROFILE%`。上述历史条目已按同一约定就地脱敏。
+
+## 2026-10-15 | <HOST-f7563cc1>（补记：投影器之前的初始人工动作）
+- 动作: hook 首次注册（python 直写 settings.json）；env 五键为本机既有配置（非本项目写入）
+- 备份: settings.json.bak-20261015-exit-ip-guard
+- 验证: hook 三分支独立测试过（正常 0/漂移 2/不可达 0）；settings reparse + diff 仅增 hooks 键
+- 当日环境验证: <redacted>（2026-10-16 脱敏：原记录含出口 IP 与浏览器/系统代理环境结论）
+
+## 2026-10-15 23:46 | <HOST-f7563cc1>
+- 动作: env 新增[] / hook: noop-已注册 / env 异值跳过 0 项
+- 预检出口: <redacted>（2026-10-16 脱敏）
+- 冒烟: 
+exit=0（期望 0）
+
+## 2026-10-15 23:52 | <HOST-f7563cc1>
+- 动作: env 新增[] / hook: noop-已注册 / env 异值跳过 0 项
+- 预检出口: <redacted>（2026-10-16 脱敏）
+- 冒烟: 
+exit=0（期望 0）
+
+## 2026-10-16 | 说明修正（不改写上述历史操作）
+- 当前写入范围以 install.ps1 / RUNBOOK.md 为准：精确移除本仓历史 SessionStart action，或操作者显式选择后补齐 HTTP_PROXY/HTTPS_PROXY；不再注册 hook，不改遥测、时区、指纹、凭据或系统代理。
+- 历史“出口/无告警/不可达 exit 0”等记录不证明使用资格、客户端实际路由或账号安全；SessionStart 不提供请求阻断。
+- 后续写入使用 GUID 原字节备份、前后 SHA256、prepared 与 applied-readback-verified 阶段；只有 prepared 不代表成功。
+
+## 2026-10-16T00:17:46.3962674+08:00 |
+- phase: prepared
+- actions: remove-legacy-session-start-action
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-4a139b3c86874f25abe447ab0c19de18
+- before_sha256: 9ecbeb352342960745247f8e8d7e20d9b95e4cd394f677a950e594a1bb70726b
+- after_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
+- phase: applied-readback-verified
+- metadata_correction: COMPUTERNAME 环境变量为空导致原日志缺少机器名；后续版本改用 Environment.MachineName。
+- machine_name_readback: <HOST-f7563cc1>（主代理通过 Environment.MachineName 读回，按本文件头注写的伪名脱敏）
+- execution_boundary: 独立复核等待期间检测到本任务已授权的 hook 移除已提前执行，执行来源未确认；主代理已中断相关复核会话，独立核对备份/当前哈希与完整 JSON 语义差异，仅删除该 action，其余设置保留。此记录不构成独立复核通过、host_loaded / live_accepted。
+- idempotence_readback: 主代理再次运行 -RemoveLegacyHook -Apply 返回 NO_CHANGE；settings 与 journal 哈希均保持不变。
+
+## 2026-10-16T08:03:44.7780044+08:00 | <HOST-f7563cc1>
+- phase: manual-entry
+- actions: retire-machine-side-lane-copies
+- detail: 2026-10-15 会话部署的机器侧副本已退役（~/.claude/scripts/Set-ClaudeLane.ps1、~/.claude/settings.official-anthropic.json、Desktop/Chrome-Claude-Dedicated.lnk）；真源收编为本仓 Set-ClaudeLane.ps1 + settings.official-anthropic.json，专用浏览器统一 start-claude-chrome.cmd
+- verification: qa/test-tools.ps1 14/14 PASS；本仓 Set-ClaudeLane status=current_lane=official/variant_ready=true/cc_switch_running=false；settings.json 哈希未变
+- rollback: git revert 本次提交可撤销仓内工具；机器侧副本与仓内提交字节一致（变体 sha256 06341df3 开头）可随时重建；旧 ~/.claude/settings-backups/bak-lane-* 历史备份保留未动
+
+## 2026-10-16 | <HOST-f7563cc1>（补记：CC Switch 分组与合并模板修复）
+- 动作: 人工 sqlite 事务（非本仓写入器）——删除 cc-switch.db 中 claude-desktop 分组 3 个 provider 及其 3 条 endpoint；同批清洗 settings 表 common_config_claude 模板：移除 DISABLE_LOGIN_COMMAND/DISABLE_LOGOUT_COMMAND/DISABLE_UPGRADE_COMMAND/DISABLE_EXTRA_USAGE_COMMAND、CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK/CLAUDE_CODE_ATTRIBUTION_HEADER/CLAUDE_CODE_MAX_OUTPUT_TOKENS/CLAUDE_CODE_EFFORT_LEVEL 八键与顶层 model 钉定
+- 备份: ~/.cc-switch/backups/manual-pre-claude-official-clean-20261015-212133.db（操作前 sqlite backup API 全量快照）
+- 验证: 事务后读回——providers/provider_endpoints 按 app_type 计数 claude-desktop=0 且其余分组计数不变；模板重解析 JSON 合法且零锁定键
+- 回滚: 关闭 CC Switch 后用该快照整库恢复
+- 执行来源: 相邻 vps-ssh-launcher 会话主代理（用户授权的修复事务）
