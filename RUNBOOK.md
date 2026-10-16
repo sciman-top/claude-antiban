@@ -145,12 +145,16 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
 - 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
 - ToOfficial 仅接受已识别 relay 形态、与当前模板一致，或规范化 USERPROFILE 并将换行统一为 LF 后 SHA256 等于仓库已知上一版模板摘要的现状；未识别配置直接拒绝，保留人工审查。
+- 因此，向本机设置临时追加任何模板没有的键都会使它落入“未识别配置”，`ToOfficial` 会 fail-closed。
+  确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
 - 当前官方模板采用默认逐项确认权限模式，不预先授权宽泛工具列表，并禁用 Auto / bypass 权限模式。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
 - 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。
 - install.ps1 与 Set-ClaudeLane.ps1 均在预览或写入前检查 cc-switch 进程；检测到运行即停止，不改设置或日志。
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
   回滚与上一节同款哈希钉死流程。
+- 回滚只接受本工具在设置文件旁创建、文件名以 `<设置文件名>.bak-claude-lane-` 开头的备份；
+  人工另存的备份不满足该判据，需按人工恢复处理并留痕。
 
 ```powershell
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1                      # 只读 status
@@ -326,7 +330,7 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
 - 不实施、本仓也不实现这些动作：改时区或区域设置伪装所在地；安装防检测浏览器或指纹清洗工具；
   伪造 device ID、UA 或会话状态；用代理、住宅出口或 VPS 把所在地替换为受支持地区；
   用 CPA 或其他网关代持、中转订阅凭据；创建多账号或换号；以“测试风险”为目的注册账号后再观察。
-- 上述动作逐一命中 Usage Policy `Do Not Abuse Our Platform` 段落的原文：
+- 与上述边界相关的 Usage Policy `Do Not Abuse Our Platform` 条款包括：
   “Access, facilitate, or provide others (including end users) with access to our products or
   services in violation of our Supported Regions Policy”；
   “Intentionally bypass or interfere with capabilities, restrictions, or guardrails established
@@ -335,8 +339,8 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
   “Circumvent a ban through the use of a different account…”；
   “Resell, proxy, or otherwise provide access to Claude through unauthorized means, including
   services that route requests through consumer subscriptions or misrepresent the product or
-  client being used”。执行后风险不是下降，而是从不合格叠加“记录在案的规避”，
-  并影响后续官方申诉。
+  client being used”。这些条款说明地区违规、绕过注册限制、换号和未授权中转的
+  政策风险；不能据此推断每次操作是否被检测、记录，或必然影响后续申诉结果。
 - 政策或实际情况变化时重新核对原文，不凭旧结论沿用：
   [Supported Regions Policy](https://www.anthropic.com/legal/supported-regions)、
   [Usage Policy](https://www.anthropic.com/legal/aup)、
@@ -344,7 +348,8 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
 
 ### B. 资格成立后（实际所在地与主体均在受支持范围）
 
-此时不需要任何“防封技巧”，按官方口径正常使用即可：
+资格成立后，按官方口径使用并减少配置错误；这仍不保证不会遇到账号误判、
+服务限制或停用，也没有可验证的“防封技巧”：
 
 - 账户：使用真实、准确、本人有权使用的信息；不共享账户登录信息、凭据或 API key
   （Consumer Terms 第 2 节）。误判或停用时保存脱敏错误与时间，通过
