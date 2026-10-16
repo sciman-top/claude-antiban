@@ -173,6 +173,10 @@ try {
     $current = Hash $settings
     $r = Install @('-RollbackBackup',$backup,'-ExpectedCurrentHash',('0'*64),'-Apply')
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $current) 'Rollback ignored drift guard'
+    $journalBefore = Hash $journal
+    $r = Install @('-RollbackBackup',$backup,'-ExpectedCurrentHash',$current)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('scope=restore-backup-file') -and $r.Text.Contains('backup-bytes=restored') -and $r.Text.Contains('current-file=replaced')) $r.Text
+    Assert ((Hash $settings) -eq $current -and (Hash $journal) -eq $journalBefore) 'Rollback preview wrote data'
     $r = Install @('-RollbackBackup',$backup,'-ExpectedCurrentHash',$current,'-Apply')
     Assert ($r.Code -eq 0 -and (Hash $settings) -eq $originalHash) $r.Text
     Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-*').Count -eq 2) 'Rollback backup missing'
