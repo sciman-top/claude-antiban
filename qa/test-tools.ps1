@@ -230,11 +230,14 @@ try {
     Assert (@(Get-ChildItem $root -Filter '*.bak-claude-lane-*').Count -eq 2) 'Rollback lane backup missing'
   }
   Case 'tracked files carry no raw infrastructure identifiers' {
-    # Regression barrier for the 2026-10-15 leaks: a real egress IP, hostname or
-    # user path must never reach a tracked file, because a remote mirrors it.
+    # Regression barrier for the 2026-10-15 leaks: a real egress IP, hostname,
+    # user path, proxy provider or endpoint domain must never reach a tracked
+    # file, because a public remote mirrors it.
     Push-Location $repo
     try {
       $documentedOnly = @('^127\.', '^10\.', '^192\.168\.', '^172\.(1[6-9]|2\d|3[01])\.', '^192\.0\.2\.', '^198\.51\.100\.', '^203\.0\.113\.')
+      # Built from pieces so this barrier file does not contain the literals itself.
+      $bannedLiterals = @('b' + 'wg', 'band' + 'wagon', 'fq.sci' + 'man.top')
       $found = [Collections.Generic.List[string]]::new()
       foreach ($relative in @(git ls-files)) {
         $text = Get-Content -LiteralPath (Join-Path $repo $relative) -Raw -ErrorAction SilentlyContinue
@@ -244,6 +247,9 @@ try {
         }
         if ($text -match '[A-Za-z]:\\Users\\(?!<USER>)') { $found.Add("$relative user-path") }
         if ($text.Contains([Environment]::MachineName)) { $found.Add("$relative hostname") }
+        foreach ($literal in $bannedLiterals) {
+          if ($text.IndexOf($literal, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $found.Add("$relative provider=$literal") }
+        }
       }
       Assert ($found.Count -eq 0) ('raw infrastructure identifiers: ' + ($found -join '; '))
     } finally { Pop-Location }
