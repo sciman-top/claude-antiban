@@ -216,7 +216,10 @@ if ($RollbackBackup) {
 }
 $afterHash = Get-Hash $afterBytes
 if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE'; exit 0 }
-if (-not $Apply) { Write-Output ('PREVIEW actions=' + ($actions -join ',') + '; add -Apply to write'); exit 0 }
+if (-not $Apply) {
+  Write-Output ('PREVIEW actions=' + ($actions -join ',') + '; full-file-replacement=true; extra-settings=not-preserved; add -Apply to write')
+  exit 0
+}
 
 $journal = [IO.Path]::GetFullPath($JournalPath)
 if ($journal -ieq $settings -or -not (Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($journal)) -PathType Container)) { throw 'Invalid journal destination.' }

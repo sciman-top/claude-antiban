@@ -109,3 +109,11 @@ exit=0（期望 0）
 - rollback: close CC Switch; run repair.py beside receipt.json with --rollback <this backup directory> and --expected <both after hashes>; preview before --apply; changed current or backup hashes are refused
 - evidence: raw database and preferences backups verified; fixture covered no-op, drift refusal, exact rollback and concurrent-provider refusal; real client launch and account acceptance not performed
 - rollback-scope: earlier full-database snapshot instructions are historical only; do not overwrite subsequent changes. The hash-bound repair.py rollback restores only this supplemental repair and does not recreate the deleted providers.
+
+## 2026-10-16T20:32:43.6801662+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: refresh-known-official-template
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-lane-2b34c8ee7a5d49898c0be23c8061d92d
+- before_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
+- after_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
+- phase: applied-readback-verified

@@ -136,17 +136,20 @@ pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>'
 `Set-ClaudeLane.ps1` 管理 `~/.claude/settings.json` 在已识别中继形态（env 含
 `ANTHROPIC_BASE_URL`）与本仓模板 `settings.official-anthropic.json` 之间的整文件切换。
 无参数调用只输出只读 status：`current_lane=relay` 表示用户设置含 `ANTHROPIC_BASE_URL`，
-`official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置，`missing` 表示文件缺失，
-`invalid` 表示文件存在但不是有效 JSON 对象；写入路径对此仍拒绝，不因分类放行。
+`official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置（也可能是精确的上一版仓库模板），
+`missing` 表示文件缺失，`invalid` 表示文件存在但不是有效 JSON 对象；status 分类本身不授权写入。
+写入路径只接受识别出的 relay、当前模板（不变时返回 `NO_CHANGE`）或哈希精确匹配的上一版模板；其他配置拒绝整文件替换。
 status 只分类设置文件，不证明进程实际路由或账号资格；lane 切换是本机配置管理，不影响第 1 节的资格判断。
 status 同时返回 `process_overrides_present`（仅变量名）及 `route_verified=false`；
 即使 `current_lane=official`，父进程的中继环境仍可能影响普通启动的 Claude。
 
-- 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
+- 默认仅预览，输出会明确标记 `full-file-replacement=true` 和 `extra-settings=not-preserved`；`-Apply` 才写文件。
+  整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
 - 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
 - ToOfficial 仅接受已识别 relay 形态、与当前模板一致，或规范化 USERPROFILE 并将换行统一为 LF 后 SHA256 等于仓库已知上一版模板摘要的现状；未识别配置直接拒绝，保留人工审查。
-- 因此，向本机设置临时追加任何模板没有的键都会使它落入“未识别配置”，`ToOfficial` 会 fail-closed。
-  确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
+- 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
+  即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
+- 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
 - 当前官方模板采用默认逐项确认权限模式，不预先授权宽泛工具列表，并禁用 Auto / bypass 权限模式。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
 - 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。

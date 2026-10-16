@@ -380,7 +380,7 @@ try {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
     $before = Hash $settings; $journalBefore = Hash $journal
     $r = Lane @('-ToOfficial')
-    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) $r.Text
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW') -and $r.Text.Contains('full-file-replacement=true') -and $r.Text.Contains('extra-settings=not-preserved')) $r.Text
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Preview wrote data'
     Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count -eq 0) 'Preview created backup'
   }
