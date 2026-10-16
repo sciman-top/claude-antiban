@@ -171,7 +171,7 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -LaunchOfficial
 
 两种动作均要求设置与模板字节一致，拒绝模板中的认证 helper、路由覆盖和运行中的
 CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、订阅 token 环境变量、Bedrock/Vertex/Foundry
-选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`）、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
+选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`、`MAX_MCP_OUTPUT_TOKENS`）、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
 父进程、User/Machine 环境、凭据文件均不改写；HTTP/HTTPS/ALL_PROXY/NO_PROXY、
 自定义 CA 与隐私偏好原样保留，不预设应当直连。
 

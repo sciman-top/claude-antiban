@@ -342,10 +342,10 @@ try {
     $r = Run (Join-Path $repo 'Set-ClaudeLane.ps1') @('-OfficialPreflight','-SettingsPath',$settings,'-VariantPath',$variant,'-JournalPath',$journal) @{
       ANTHROPIC_BASE_URL='https://private-value-fixture.invalid'; ANTHROPIC_AUTH_TOKEN='private-token-fixture';
       CLAUDE_CONFIG_DIR='private-config-fixture'; CLAUDE_CODE_USE_BEDROCK='1'; NODE_TLS_REJECT_UNAUTHORIZED='0'; HTTP_PROXY='http://proxy-fixture.invalid';
-      NODE_EXTRA_CA_CERTS='fixture-ca-only'; MAX_THINKING_TOKENS='1'; CLAUDE_CODE_EXTRA_BODY='{"k":"private-value-fixture"}'
+      NODE_EXTRA_CA_CERTS='fixture-ca-only'; MAX_THINKING_TOKENS='1'; CLAUDE_CODE_EXTRA_BODY='{"k":"private-value-fixture"}'; MAX_MCP_OUTPUT_TOKENS='1'
     }
     Assert ($r.Code -eq 0) $r.Text
-    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY')) {
+    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY','MAX_MCP_OUTPUT_TOKENS')) {
       Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=False ')) "Override survived: $name"
     }
     foreach ($name in @('HTTP_PROXY','NODE_EXTRA_CA_CERTS')) {
@@ -357,7 +357,7 @@ try {
     [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
   }
   Case 'official child refuses mismatched settings and credential-bearing variants' {
-    foreach ($text in @('{"apiKeyHelper":"fixture-helper"}','{"env":{"ANTHROPIC_BASE_URL":"https://private-value-fixture.invalid"}}','{"env":{"CLAUDE_CONFIG_DIR":"private-config-fixture"}}','{"env":{"MAX_THINKING_TOKENS":"1"}}','{"env":{"CLAUDE_CODE_EXTRA_BODY":"{}"}}','{"env":[]}','{"env":"private-value-fixture"}')) {
+    foreach ($text in @('{"apiKeyHelper":"fixture-helper"}','{"env":{"ANTHROPIC_BASE_URL":"https://private-value-fixture.invalid"}}','{"env":{"CLAUDE_CONFIG_DIR":"private-config-fixture"}}','{"env":{"MAX_THINKING_TOKENS":"1"}}','{"env":{"CLAUDE_CODE_EXTRA_BODY":"{}"}}','{"env":{"MAX_MCP_OUTPUT_TOKENS":"1"}}','{"env":[]}','{"env":"private-value-fixture"}')) {
       [IO.File]::WriteAllText($variant,$text,[Text.UTF8Encoding]::new($false)); Write-Settings $text
       foreach ($action in @('-OfficialPreflight','-LaunchOfficial')) {
         $r = Lane @($action)
