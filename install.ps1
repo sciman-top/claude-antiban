@@ -11,6 +11,9 @@ param(
   [string]$ExpectedCurrentHash = ''
 )
 $ErrorActionPreference = 'Stop'
+if (@(Get-Process -Name 'cc-switch' -ErrorAction SilentlyContinue).Count -gt 0) {
+  throw 'cc-switch is running and rewrites settings.json; close it before running this installer.'
+}
 
 function Get-Hash([byte[]]$Bytes) {
   [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
@@ -24,14 +27,17 @@ function Get-HostTag {
   return '<HOST-' + [Convert]::ToHexString($digest[0..3]).ToLowerInvariant() + '>'
 }
 function Get-JournalBackupPath([string]$Path) {
-  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $Path }
-  $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
   $fullPath = [IO.Path]::GetFullPath($Path)
-  $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
-  if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
+  if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
+    $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
+    if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+      return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
+    }
   }
-  return $fullPath
+  $suffix = [regex]::Match([IO.Path]::GetFileName($fullPath), '\.bak-claude-env-[a-f0-9]{32}$', 'IgnoreCase')
+  if ($suffix.Success) { return '<SETTINGS-DIR>\<SETTINGS-FILE>' + $suffix.Value }
+  return '<SETTINGS-BACKUP>'
 }
 function Read-Settings([byte[]]$Bytes) {
   try {

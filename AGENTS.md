@@ -13,13 +13,13 @@
 - 无固定出口默认值；出口检查须显式选择 HTTP/HTTPS 代理，只证明诊断请求当时的出口，不证明其他客户端、账号或未来路由。
 - 不注册自动 hook；SessionStart 的 exit 2 不阻断会话或模型请求。历史 hook 只按精确路径与已知命令形式移除，保留未知命令及其他配置。
 - 机器写入入口一 `install.ps1 -Apply`：仅精确移除本仓历史 SessionStart action，或显式补齐 HTTP_PROXY/HTTPS_PROXY；既有异值拒绝，大小写不重复写，遥测配置不改。
-- 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，仅接受已识别 relay 形态 env.ANTHROPIC_BASE_URL）或 `-RollbackBackup`（哈希钉死回滚）；cc-switch 等重写 settings.json 的工具运行中拒绝；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
+- 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，只接受已识别 relay 形态或哈希识别的上一版仓库模板）或 `-RollbackBackup`（哈希钉死回滚）；install/lane 均在预览及写入前拒绝运行中的 CC Switch；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
 - 每次机器写入必须创建原字节备份并 append `machine-journal.md`（准备/读回阶段及哈希）；恢复必须绑定当前哈希，保留后续修改。运行安装器时避免其他客户端/工具同时写配置。
 - `chrome-data/`、`qa/throwaway/` 永不入库；不得为回滚删除会话数据。机器配置与凭据只留本机。
 - 公开远端仅接受脱敏内容：推送前按 RUNBOOK.md 第 7 节核对；2026-10-16 起公开远端以脱敏副本单根历史维护，早期完整历史在核对末态一致后删除、不留副本。新增条目不得引入出口 IP、代理供应商、端点域名、部署拓扑、真实主机名或用户路径。
 
 ## B. 最低门禁
-- 脚本改动运行 `pwsh -NoProfile -File qa/test-tools.ps1`：临时配置验证预览、精确删除、备份/回滚、配置保留、代理冲突、锁文件与诊断失败分支；禁止用真实账号或网络请求替代 fixture。
+- 脚本改动运行 `pwsh -NoProfile -File qa/test-tools.ps1`：临时配置验证权限模板、lane 状态分类、旧模板精确迁移、预览、精确删除、备份/回滚、配置保留、代理冲突、CC Switch 竞争、日志路径脱敏、作用域诊断与网络失败分支；禁止用真实账号或网络请求替代 fixture。
 - 脚本语法使用 PowerShell Parser，文档/路径修改用 `git diff --check` 与引用核对。浏览器启动不属于自动化 fixture。
 - 本地投影后 fresh read 设置并证明仅预期语义差异；文件读回不证明 host_loaded 或 live_accepted。
 

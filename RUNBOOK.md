@@ -39,11 +39,12 @@
 CLI 支持 HTTP/HTTPS 代理，不支持 SOCKS 代理。不要把 SOCKS 端口误填为 HTTP；
 不要通过关闭证书验证来“修复”TLS。代理 URI 不写用户名、密码或 token。
 
-分别核对 Process / User / Machine 的 HTTP_PROXY、HTTPS_PROXY、NO_PROXY，
+分别核对 Process / User / Machine 的 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY、NO_PROXY，
 以及 managed、user、project、local settings 和实际启动器。旧终端、GUI 或后台进程
 可能保留原环境；端口监听和一次 PowerShell 请求不能证明 CLI 的实际路由。
-预检仅报告 user settings 与当前进程中的相关键是否存在，不读取凭据文件或打印值，
-也不覆盖以上所有作用域。
+预检对相关路由/认证变量仅报告 user settings 与 Process / User / Machine 各作用域的
+存在性，不读取或打印值；某作用域不可读时明确输出 unavailable。这不覆盖全部设置层级，
+也不能证明某个 Claude 进程实际继承了哪个值。
 
 避免网络故障期间无意义的重复发送和并发；遇到 429 遵守产品限额与 Retry-After，
 不承诺固定几小时自动恢复。认证拒绝或明确停用时停止账号探测，先辨别错误并走官方支持。
@@ -133,12 +134,17 @@ pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>'
 
 `Set-ClaudeLane.ps1` 管理 `~/.claude/settings.json` 在已识别中继形态（env 含
 `ANTHROPIC_BASE_URL`）与本仓模板 `settings.official-anthropic.json` 之间的整文件切换。
-无参数调用只输出只读 status；lane 切换是本机配置管理，不影响第 1 节的资格判断。
+无参数调用只输出只读 status：`current_lane=relay` 表示用户设置含 `ANTHROPIC_BASE_URL`，
+`official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置，`missing` 表示文件缺失。
+status 只分类设置文件，不证明进程实际路由或账号资格；lane 切换是本机配置管理，不影响第 1 节的资格判断。
 
 - 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
 - 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
-- 仅接受已识别 relay 形态或与模板字节一致的现状；未识别配置直接拒绝，保留人工审查。
-- cc-switch 等会重写 settings.json 的工具运行中时拒绝执行。
+- ToOfficial 仅接受已识别 relay 形态、与当前模板一致，或规范化 USERPROFILE 并将换行统一为 LF 后 SHA256 等于仓库已知上一版模板摘要的现状；未识别配置直接拒绝，保留人工审查。
+- 当前官方模板采用默认逐项确认权限模式，不预先授权宽泛工具列表，并禁用 Auto / bypass 权限模式。它不内置代理端点、附加项目目录或本机状态栏脚本。
+- 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
+- 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。
+- install.ps1 与 Set-ClaudeLane.ps1 均在预览或写入前检查 cc-switch 进程；检测到运行即停止，不改设置或日志。
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
   回滚与上一节同款哈希钉死流程。
 
@@ -158,7 +164,7 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -RollbackBackup '<APPLIED 输出的�
 
 CC Switch（`~/.cc-switch/cc-switch.db`）切换 provider 时会重写 `~/.claude/settings.json`，
 其库内 `common_config_claude` 合并模板是随切换生效的第二条写入通道。CC Switch 运行期间
-不要手工编辑 settings.json，也不要执行 lane 切换或 install.ps1（两者对此 fail-closed）。
+不要手工编辑 settings.json，也不要并行启动其他写入器。
 
 2026-10-15 深夜本机一次人工修复（未走本仓写入器，动作/备份/验证/回滚见
 machine-journal 同日补记）：删除 claude-desktop 分组 3 个中继 provider 及其 endpoint；
@@ -201,7 +207,7 @@ pwsh -NoProfile -File .\qa\test-tools.ps1
 git diff --check
 ```
 
-fixture 验证配置保护、退出码及回滚，完全不访问外网。
+fixture 验证权限模板、配置保护、CC Switch fail-closed、日志路径脱敏、作用域诊断仅报存在性、退出码及回滚，完全不访问外网。
 源码和 fixture 为 repo_verified；真实设置备份/读回仅为 filesystem_projected。
 本次不启动 Claude 新会话、不注册/登录、不发模型请求、不部署/重启 VPS。
 host_loaded 与 live_accepted 均需独立证据；在资格未解决前不通过真实账号试验来补齐。
@@ -215,7 +221,7 @@ host_loaded 与 live_accepted 均需独立证据；在资格未解决前不通�
 | 内容 | 保存位置与迁移方式 |
 | --- | --- |
 | 修复代码、配置意图、适用边界、验证和回滚方法 | 本仓脚本、本文和 Git 提交，随项目迁移 |
-| 已发生的机器配置变更 | `machine-journal.md` 按机器伪名和时间追加；自动写入含动作、备份路径、前后 SHA256 与读回阶段 |
+| 已发生的机器配置变更 | `machine-journal.md` 按机器伪名和时间追加；自动写入含动作、脱敏备份路径、前后 SHA256 与读回阶段 |
 | 实际 settings、原字节备份、凭据、浏览器会话、代理订阅 | 各机器本地保管；不作为项目配置模板，不随代码投影 |
 | 客户端、系统代理、证书等安装器范围外状态 | 按新机实际情况核对；如人工修改，脱敏补记动作、验证、回滚及执行来源，不能冒称安装器已完成 |
 
@@ -225,6 +231,9 @@ host_loaded 与 live_accepted 均需独立证据；在资格未解决前不通�
 环境结论、系统代理注册表状态等本机基建信息。机器标识写伪名 `<HOST-xxxxxxxx>`
 （机器名小写后的 SHA256 前 4 字节，`install.ps1` / `Set-ClaudeLane.ps1` 自动生成），
 备份路径中的用户名写 `%USERPROFILE%`，真实主机名、用户名与用户路径不入库。
+标准 `~/.claude/settings.json` 路径保留 `%USERPROFILE%` 占位符和 `.claude/settings.json` 相对结构；
+Windows 日志使用反斜杠；
+非标准设置路径只写 `<SETTINGS-DIR>\<SETTINGS-FILE>` 占位符，完整备份路径只出现在本机 APPLIED 输出。
 实际备份可能含敏感配置，仅留原机器。已跟踪内容不含上述标识；2026-10-16 推送公开远端前
 已改用脱敏副本重建单根历史，早期完整历史（含 2026-10-15 的出口 IP、代理链路与部署拓扑）
 在核对公开树与旧末态一致后已删除，不留副本；此后每次推送前仍须按本节核对新增 diff。

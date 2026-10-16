@@ -1,6 +1,6 @@
 # 机器投影审计留痕（append-only）
 
-> 当前自动留痕范围为 `install.ps1 -Apply` 对用户设置的精确修复；范围与操作方法见 RUNBOOK.md。每台机器追加自己的动作、备份路径、前后 SHA256 与读回结果；预览和 NO_CHANGE 不写日志。以下历史操作保留，不能作为其他机器的配置模板或验收证据。
+> 当前自动留痕范围为 `install.ps1 -Apply` 与 `Set-ClaudeLane.ps1 -Apply` 对用户设置的精确修复；范围与操作方法见 RUNBOOK.md。每台机器追加自己的动作、脱敏备份路径、前后 SHA256 与读回结果；预览和 NO_CHANGE 不写日志。非标准设置路径使用占位符，不记录绝对路径。以下历史操作保留，不能作为其他机器的配置模板或验收证据。
 >
 > 2026-10-15 的两条历史条目由早期写入器产生，记录了本机出口 IP、浏览器/系统代理环境结论等基建信息，只描述当时本机状态，不是使用资格或账号安全的证据；按 RUNBOOK.md 第 7 节，这类信息在对任何远端推送或对外分享前必须脱敏。脱敏必须覆盖 Git 历史：只改工作树不会把内容从提交历史里移除，所以对外传递要用脱敏后的副本，或先改写历史再推送。
 >
@@ -76,4 +76,12 @@ exit=0（期望 0）
 - backup: %USERPROFILE%\.claude\settings.json.bak-claude-lane-52df5a17ff934cea8e062599858afb2d
 - before_sha256: bdcf9b00a2d66066ee0ac94a86f8aba7514a3724424e45eb4ccf714f8b125899
 - after_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
+- phase: applied-readback-verified
+
+## 2026-10-16T11:43:15.8199207+08:00 | <HOST-99e0671a>
+- phase: prepared
+- actions: refresh-known-official-template
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-lane-189fc1b1163f4a81816053b462a8a7fc
+- before_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
+- after_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
 - phase: applied-readback-verified

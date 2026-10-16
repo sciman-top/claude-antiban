@@ -10,6 +10,7 @@ param(
   [string]$ExpectedCurrentHash = ''
 )
 $ErrorActionPreference = 'Stop'
+$legacyOfficialTemplateHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
 
 function Get-Hash([byte[]]$Bytes) {
   [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
@@ -23,14 +24,17 @@ function Get-HostTag {
   return '<HOST-' + [Convert]::ToHexString($digest[0..3]).ToLowerInvariant() + '>'
 }
 function Get-JournalBackupPath([string]$Path) {
-  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $Path }
-  $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
   $fullPath = [IO.Path]::GetFullPath($Path)
-  $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
-  if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
+  if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
+    $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
+    if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+      return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
+    }
   }
-  return $fullPath
+  $suffix = [regex]::Match([IO.Path]::GetFileName($fullPath), '\.bak-claude-lane-[a-f0-9]{32}$', 'IgnoreCase')
+  if ($suffix.Success) { return '<SETTINGS-DIR>\<SETTINGS-FILE>' + $suffix.Value }
+  return '<SETTINGS-BACKUP>'
 }
 function Read-Json([byte[]]$Bytes) {
   try {
@@ -40,10 +44,28 @@ function Read-Json([byte[]]$Bytes) {
     return $value
   } catch { throw 'Input must be a valid JSON object; no changes made.' }
 }
+function Get-ProjectedVariantBytes([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw '%USERPROFILE% is not set; cannot project the official variant.' }
+  $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
+  $variantText = [IO.File]::ReadAllText([IO.Path]::GetFullPath($Path)).Replace('%USERPROFILE%', $profilePath)
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($variantText)
+  $null = Read-Json $bytes
+  return ,$bytes
+}
 function Test-RelayLane($Json) {
   $envKeys = @($Json.Keys | Where-Object { [string]$_ -ieq 'env' })
   if ($envKeys.Count -ne 1 -or $Json[$envKeys[0]] -isnot [Collections.IDictionary]) { return $false }
   return (@($Json[$envKeys[0]].Keys | Where-Object { [string]$_ -ieq 'ANTHROPIC_BASE_URL' })).Count -gt 0
+}
+function Test-LegacyOfficialTemplate([byte[]]$Bytes) {
+  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $false }
+  try {
+    $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
+    $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
+    $normalized = $text.Replace($profilePath, '%USERPROFILE%').Replace("`r`n", "`n").Replace("`r", "`n")
+    $normalizedBytes = [Text.UTF8Encoding]::new($false).GetBytes($normalized)
+    return (Get-Hash $normalizedBytes) -eq $legacyOfficialTemplateHash
+  } catch { return $false }
 }
 function Assert-EntryTarget([string]$Path, [string]$What) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$What file missing." }
@@ -53,12 +75,22 @@ function Assert-EntryTarget([string]$Path, [string]$What) {
 # Default invocation is a read-only status report.
 if (-not $ToOfficial -and -not $RollbackBackup) {
   $lane = 'missing'
+  $settingsBytes = $null
   if (Test-Path -LiteralPath $SettingsPath -PathType Leaf) {
-    $lane = if (Test-RelayLane (Read-Json ([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $SettingsPath).Path)))) { 'relay' } else { 'official' }
+    $settingsBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $SettingsPath).Path)
+    $settingsJson = Read-Json $settingsBytes
+    $lane = if (Test-RelayLane $settingsJson) { 'relay' } else { 'custom' }
   }
   $variantReady = $false
   if (Test-Path -LiteralPath $VariantPath -PathType Leaf) {
-    try { $null = Read-Json ([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $VariantPath).Path)); $variantReady = $true } catch { $variantReady = $false }
+    try {
+      $null = Read-Json ([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $VariantPath).Path))
+      $variantReady = $true
+      if ($null -ne $settingsBytes -and -not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $projectedBytes = Get-ProjectedVariantBytes $VariantPath
+        if ((Get-Hash $settingsBytes) -eq (Get-Hash $projectedBytes)) { $lane = 'official' }
+      }
+    } catch { $variantReady = $false }
   }
   [pscustomobject]@{
     current_lane      = $lane
@@ -95,17 +127,18 @@ if ($RollbackBackup) {
   $beforeJson = Read-Json $beforeBytes
   # The in-repo variant stays portable: it carries %USERPROFILE% instead of a real
   # user path, so it is correct on any machine and the repo never stores a username.
-  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw '%USERPROFILE% is not set; cannot project the official variant.' }
-  $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
-  $variantText = [IO.File]::ReadAllText(([IO.Path]::GetFullPath($VariantPath))).Replace('%USERPROFILE%', $profilePath)
-  $afterBytes = [Text.UTF8Encoding]::new($false).GetBytes($variantText)
+  $afterBytes = Get-ProjectedVariantBytes $VariantPath
   $afterHash = Get-Hash $afterBytes
-  $null = Read-Json $afterBytes
   if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the official variant)'; exit 0 }
-  # Whole-file replacement is only offered between the known relay form and this
-  # repo's variant; an unrecognized configuration is left for manual review.
-  if (-not (Test-RelayLane $beforeJson)) { throw 'Current settings are not the relay lane form (env.ANTHROPIC_BASE_URL absent) and do not match the variant; no whole-file replacement.' }
-  $actions = @('switch-lane-to-official')
+  # Whole-file replacement is only offered from an identified relay form or the
+  # exact previous repository template; other settings require manual review.
+  if (Test-RelayLane $beforeJson) {
+    $actions = @('switch-lane-to-official')
+  } elseif (Test-LegacyOfficialTemplate $beforeBytes) {
+    $actions = @('refresh-known-official-template')
+  } else {
+    throw 'Current settings are neither the relay form nor the exact previous repository template; no whole-file replacement.'
+  }
 }
 $afterHash = Get-Hash $afterBytes
 if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE'; exit 0 }

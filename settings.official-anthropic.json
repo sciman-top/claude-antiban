@@ -6,49 +6,9 @@
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true
   },
-  "env": {
-    "BASH_DEFAULT_TIMEOUT_MS": "300000",
-    "BASH_MAX_OUTPUT_LENGTH": "30000",
-    "BASH_MAX_TIMEOUT_MS": "1200000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
-    "HTTP_PROXY": "http://127.0.0.1:10808",
-    "HTTPS_PROXY": "http://127.0.0.1:10808",
-    "MAX_MCP_OUTPUT_TOKENS": "25000",
-    "http_proxy": "http://127.0.0.1:10808",
-    "https_proxy": "http://127.0.0.1:10808"
-  },
   "language": "Chinese",
   "permissions": {
-    "additionalDirectories": [
-      "D:/CODE/skills-manager"
-    ],
-    "allow": [
-      "Read",
-      "Edit",
-      "Write",
-      "Bash",
-      "PowerShell",
-      "Glob",
-      "Grep",
-      "LSP",
-      "Skill",
-      "TodoWrite",
-      "WebSearch",
-      "WebFetch",
-      "mcp__context7__*",
-      "mcp__web_reader__*",
-      "mcp__microsoft-learn__*",
-      "mcp__4_5v_mcp__*",
-      "mcp__zai-mcp-server__*",
-      "mcp__web-search-prime__*",
-      "mcp__zread__*",
-      "mcp__github__*",
-      "mcp__playwright__*",
-      "Bash(*)"
-    ],
-    "defaultMode": "dontAsk",
+    "defaultMode": "default",
     "deny": [
       "Bash(*..*)",
       "Read(**/.env)",
@@ -74,12 +34,9 @@
       "Bash(powershell:*)",
       "Bash(powershell.exe:*)"
     ],
+    "disableAutoMode": "disable",
     "disableBypassPermissionsMode": "disable"
   },
   "skipDangerousModePermissionPrompt": false,
-  "statusLine": {
-    "command": "node %USERPROFILE%/.claude/plugins/claude-dashboard/dist/index.js",
-    "type": "command"
-  },
   "tui": "fullscreen"
 }

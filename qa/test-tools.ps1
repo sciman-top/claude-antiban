@@ -4,19 +4,49 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $root = Join-Path ([IO.Path]::GetTempPath()) ('claude-tools-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
+$profileRoot = Join-Path $root 'profile'
+$null = New-Item -ItemType Directory -Path $profileRoot
+$invokeFixture = Join-Path $root 'invoke-with-process-fixture.ps1'
+[IO.File]::WriteAllText($invokeFixture, @'
+param([string]$Target,[string]$ArgumentsJson)
+function global:Get-Process {
+  param([string]$Name,[string]$ErrorAction)
+  return @()
+}
+$targetArgs = @($ArgumentsJson | ConvertFrom-Json)
+$targetParams = @{}
+for ($index = 0; $index -lt $targetArgs.Count; $index++) {
+  $token = [string]$targetArgs[$index]
+  if ($token -notmatch '^-([A-Za-z][A-Za-z0-9]*)$') { throw 'Unexpected fixture parameter token.' }
+  $name = $Matches[1]
+  if ($index + 1 -lt $targetArgs.Count -and [string]$targetArgs[$index + 1] -notmatch '^-') {
+    $targetParams[$name] = $targetArgs[$index + 1]
+    $index++
+  } else { $targetParams[$name] = $true }
+}
+$global:LASTEXITCODE = 0
+try { & $Target @targetParams; exit [int]$LASTEXITCODE }
+catch { [Console]::Error.WriteLine($_); exit 1 }
+'@, [Text.UTF8Encoding]::new($false))
 $passed = 0
 function Assert($Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
-function Run([string]$Script, [string[]]$ScriptArgs = @()) {
+function Run([string]$Script, [string[]]$ScriptArgs = @(), [hashtable]$Environment = @{}) {
   $info = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh).Source)
   $info.UseShellExecute = $false
   $info.CreateNoWindow = $true
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
   $null = $info.Environment.Remove('COMPUTERNAME')
-  $info.Environment['USERPROFILE'] = $root
-  foreach ($arg in (@('-NoProfile','-File',$Script) + $ScriptArgs)) { $info.ArgumentList.Add($arg) }
+  $info.Environment['USERPROFILE'] = $profileRoot
+  $diagnosticVariables = @('ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_TLS_REJECT_UNAUTHORIZED')
+  foreach ($key in @($info.Environment.Keys)) {
+    if ($key -iin $diagnosticVariables) { $null = $info.Environment.Remove($key) }
+  }
+  foreach ($name in $Environment.Keys) { $info.Environment[$name] = [string]$Environment[$name] }
+  $argumentJson = ConvertTo-Json -InputObject ([string[]]$ScriptArgs) -Compress
+  foreach ($arg in @('-NoProfile','-File',$invokeFixture,$Script,$argumentJson)) { $info.ArgumentList.Add($arg) }
   $proc = [Diagnostics.Process]::new()
   $proc.StartInfo = $info
   try {
@@ -41,9 +71,9 @@ function Install([string[]]$Options) {
 function Lane([string[]]$Options) {
   Run (Join-Path $repo 'Set-ClaudeLane.ps1') (@('-SettingsPath',$settings,'-VariantPath',$variant,'-JournalPath',$journal) + $Options)
 }
-$settings = Join-Path $root '配置 with spaces.json'
-$journal = Join-Path $root 'journal.md'
-$variant = Join-Path $root 'official-variant.json'
+$settings = Join-Path $profileRoot '配置 with spaces.json'
+$journal = Join-Path $profileRoot 'journal.md'
+$variant = Join-Path $profileRoot 'official-variant.json'
 $variantText = '{"env":{"HTTP_PROXY":"http://127.0.0.1:10808"},"permissions":{"allow":["Read"]}}'
 $relayText = '{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"},"model":"relay-model"}'
 $hookPath = Join-Path $repo 'hooks/check-exit-ip.ps1'
@@ -77,20 +107,46 @@ elseif($Mode -eq 'retired') { & $Script }
 else { & $Script -CheckExitIp -ExpectedIp $(if($Mode -eq 'mismatch'){'203.0.113.10'}else{'203.0.113.9'}) -Proxy 'http://127.0.0.1:1' }
 exit $LASTEXITCODE
 '@)
+$ccSwitchMock = Join-Path $root 'cc-switch-running.ps1'
+[IO.File]::WriteAllText($ccSwitchMock, @'
+param([string]$Mode,[string]$Repo,[string]$SettingsPath,[string]$JournalPath,[string]$VariantPath)
+$ErrorActionPreference='Stop'
+function global:Get-Process {
+  param([string]$Name,[string]$ErrorAction)
+  if ($Name -ieq 'cc-switch') { return [pscustomobject]@{ ProcessName='cc-switch' } }
+  return @()
+}
+if ($Mode -eq 'install') {
+  & (Join-Path $Repo 'install.ps1') -SettingsPath $SettingsPath -JournalPath $JournalPath -RemoveLegacyHook -Apply
+} elseif ($Mode -eq 'lane') {
+  & (Join-Path $Repo 'Set-ClaudeLane.ps1') -SettingsPath $SettingsPath -VariantPath $VariantPath -JournalPath $JournalPath -ToOfficial -Apply
+} else { throw 'Unexpected mock mode.' }
+exit $LASTEXITCODE
+'@, [Text.UTF8Encoding]::new($false))
 try {
+  Case 'official template keeps normal approval boundaries and no fixed network route' {
+    $officialText = Get-Content -Raw -LiteralPath (Join-Path $repo 'settings.official-anthropic.json')
+    $official = $officialText | ConvertFrom-Json -AsHashtable -Depth 100
+    Assert ($official.permissions.defaultMode -eq 'default') 'Official template must use the normal permission mode'
+    Assert (-not $official.permissions.Contains('allow')) 'Official template must not auto-authorize a broad tool list'
+    Assert ($official.permissions.disableAutoMode -eq 'disable' -and $official.permissions.disableBypassPermissionsMode -eq 'disable') 'Automatic approval modes must remain disabled'
+    Assert (-not $official.Contains('env') -and -not $official.permissions.Contains('additionalDirectories')) 'Official template must not carry machine routing or extra workspace paths'
+    Assert (-not $official.Contains('statusLine')) 'Official template must not reference an unavailable local status script'
+    Assert ($officialText -notmatch '127\.0\.0\.1|skills-manager|claude-dashboard') 'Official template still carries machine-specific values'
+  }
   Case 'preview leaves bytes and journal untouched' {
     Write-Settings $fixture
     $before = Hash $settings
     $r = Install @('-RemoveLegacyHook')
     Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) $r.Text
     Assert ((Hash $settings) -eq $before -and -not (Test-Path $journal)) 'Preview wrote data'
-    Assert (@(Get-ChildItem $root -Filter '*.bak-*').Count -eq 0) 'Preview created backup'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-*').Count -eq 0) 'Preview created backup'
   }
   Case 'precise mixed hook removal, raw backup and idempotence' {
     $script:originalHash = Hash $settings
     $r = Install @('-RemoveLegacyHook','-Apply')
     Assert ($r.Code -eq 0) $r.Text
-    $script:backup = @(Get-ChildItem $root -Filter '*.bak-*')[0].FullName
+    $script:backup = @(Get-ChildItem $profileRoot -Filter '*.bak-*')[0].FullName
     Assert ((Hash $backup) -eq $originalHash) 'Backup differs from raw original'
     $journalText = Get-Content -Raw -LiteralPath $journal
     Assert ($journalText -notmatch '(?m)^## .*\|\s*$') 'Missing machine name when environment variable is absent'
@@ -119,7 +175,7 @@ try {
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $current) 'Rollback ignored drift guard'
     $r = Install @('-RollbackBackup',$backup,'-ExpectedCurrentHash',$current,'-Apply')
     Assert ($r.Code -eq 0 -and (Hash $settings) -eq $originalHash) $r.Text
-    Assert (@(Get-ChildItem $root -Filter '*.bak-*').Count -eq 2) 'Rollback backup missing'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-*').Count -eq 2) 'Rollback backup missing'
   }
   Case 'relative commands and other project paths are not owned hooks' {
     Write-Settings (@{hooks=@{SessionStart=@(@{hooks=@(
@@ -161,9 +217,45 @@ try {
   Case 'locked settings refuse without changing bytes' {
     Write-Settings '{}'; $before=Hash $settings
     $lock=[IO.File]::Open($settings,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
-    try { $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808','-Apply'); Assert ($r.Code -ne 0) 'Locked file accepted' }
+    try { $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808','-Apply'); Assert ($r.Code -ne 0) ("Locked file accepted: " + $r.Text) }
     finally { $lock.Dispose() }
     Assert ((Hash $settings) -eq $before) 'Locked file modified'
+  }
+  Case 'install and lane fail closed while cc-switch is running' {
+    [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
+    Write-Settings $fixture
+    $before = Hash $settings; $journalBefore = if (Test-Path $journal) { Hash $journal } else { '' }
+    $r = Run $ccSwitchMock @('-Mode','install','-Repo',$repo,'-SettingsPath',$settings,'-JournalPath',$journal,'-VariantPath',$variant)
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('cc-switch is running')) $r.Text
+    Assert ((Hash $settings) -eq $before -and ((Test-Path $journal) -eq [bool]$journalBefore)) 'Installer changed data while CC Switch was active'
+    if ($journalBefore) { Assert ((Hash $journal) -eq $journalBefore) 'Installer journal changed while CC Switch was active' }
+
+    Write-Settings $relayText
+    $before = Hash $settings; $journalBefore = if (Test-Path $journal) { Hash $journal } else { '' }
+    $r = Run $ccSwitchMock @('-Mode','lane','-Repo',$repo,'-SettingsPath',$settings,'-JournalPath',$journal,'-VariantPath',$variant)
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('cc-switch is running')) $r.Text
+    Assert ((Hash $settings) -eq $before -and ((Test-Path $journal) -eq [bool]$journalBefore)) 'Lane writer changed data while CC Switch was active'
+    if ($journalBefore) { Assert ((Hash $journal) -eq $journalBefore) 'Lane journal changed while CC Switch was active' }
+  }
+  Case 'journal redacts backup paths outside the user profile' {
+    $outside = Join-Path $root 'outside-profile'
+    $null = New-Item -ItemType Directory -Path $outside -Force
+    $outsideSettings = Join-Path $outside 'settings.json'
+    $outsideJournal = Join-Path $outside 'install-journal.md'
+    [IO.File]::WriteAllText($outsideSettings, (@{hooks=@{SessionStart=@(@{hooks=@($legacy)})}} | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $r = Run (Join-Path $repo 'install.ps1') @('-SettingsPath',$outsideSettings,'-JournalPath',$outsideJournal,'-RemoveLegacyHook','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $installLog = Get-Content -Raw -LiteralPath $outsideJournal
+    Assert (-not $installLog.Contains($root)) 'Installer journal leaked an external settings path'
+    Assert ($installLog -match '(?m)^- backup: <SETTINGS-DIR>\\<SETTINGS-FILE>\.bak-claude-env-[a-f0-9]{32}\r?$') 'Installer backup path was not reduced to the placeholder form'
+
+    $outsideLaneJournal = Join-Path $outside 'lane-journal.md'
+    [IO.File]::WriteAllText($outsideSettings, $relayText, [Text.UTF8Encoding]::new($false))
+    $r = Run (Join-Path $repo 'Set-ClaudeLane.ps1') @('-SettingsPath',$outsideSettings,'-VariantPath',$variant,'-JournalPath',$outsideLaneJournal,'-ToOfficial','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $laneLog = Get-Content -Raw -LiteralPath $outsideLaneJournal
+    Assert (-not $laneLog.Contains($root)) 'Lane journal leaked an external settings path'
+    Assert ($laneLog -match '(?m)^- backup: <SETTINGS-DIR>\\<SETTINGS-FILE>\.bak-claude-lane-[a-f0-9]{32}\r?$') 'Lane backup path was not reduced to the placeholder form'
   }
   Case 'diagnostic success, mismatch, unreachable and invalid responses' {
     foreach($mode in @('success','mismatch','unreachable','invalid','retired')) {
@@ -174,11 +266,23 @@ try {
   }
   Case 'preflight and legacy restore perform no network or timezone mutation' {
     Write-Settings $fixture; $before=Hash $settings
+    $processVars = @{ ANTHROPIC_BASE_URL='process-secret-fixture'; HTTP_PROXY='process-proxy-fixture'; ALL_PROXY='process-socks-fixture' }
     foreach($mode in @('default','restore')) {
-      $r=Run $mock @('-Script',(Join-Path $repo 'prep-registration.ps1'),'-Mode',$mode,'-SettingsPath',$settings)
+      $environment = if ($mode -eq 'default') { $processVars } else { @{} }
+      $r=Run $mock @('-Script',(Join-Path $repo 'prep-registration.ps1'),'-Mode',$mode,'-SettingsPath',$settings) $environment
       Assert ($r.Code -eq 0 -and -not $r.Text.Contains('private-value-fixture')) $r.Text
       Assert ((Hash $settings) -eq $before) 'Preflight modified settings'
+      if ($mode -eq 'default') {
+        Assert ($r.Text -match '(?m)^ANTHROPIC_BASE_URL settings_present=False process_present=True user_present=(True|False|unavailable) machine_present=(True|False|unavailable)\r?$') $r.Text
+        Assert ($r.Text -match '(?m)^HTTP_PROXY settings_present=True process_present=True user_present=(True|False|unavailable) machine_present=(True|False|unavailable)\r?$') $r.Text
+        Assert ($r.Text -match '(?m)^ALL_PROXY settings_present=False process_present=True user_present=(True|False|unavailable) machine_present=(True|False|unavailable)\r?$') $r.Text
+        Assert (-not $r.Text.Contains('process-secret-fixture') -and -not $r.Text.Contains('process-proxy-fixture') -and -not $r.Text.Contains('process-socks-fixture')) 'Preflight leaked an environment value'
+      }
     }
+    Remove-Item -LiteralPath $settings
+    $r=Run $mock @('-Script',(Join-Path $repo 'prep-registration.ps1'),'-Mode','default','-SettingsPath',$settings) $processVars
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('USER_SETTINGS=absent') -and $r.Text.Contains('ANTHROPIC_BASE_URL settings_present=False process_present=True')) $r.Text
+    Assert (-not $r.Text.Contains('process-secret-fixture')) 'Preflight leaked process values when settings are absent'
     $launcher=Get-Content -Raw -LiteralPath (Join-Path $repo 'start-claude-chrome.cmd')
     Assert ($launcher -notmatch '--(proxy-server|lang|force-webrtc)') 'Launcher still forces identity/network flags'
   }
@@ -188,7 +292,25 @@ try {
     Assert ($r.Code -eq 0 -and $r.Text.Contains('"current_lane":"relay"')) $r.Text
     Assert (-not $r.Text.Contains('secret-fixture')) 'Status leaked settings values'
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Status wrote data'
-    Assert (@(Get-ChildItem $root -Filter '*.bak-claude-lane-*').Count -eq 0) 'Status created backup'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count -eq 0) 'Status created backup'
+  }
+  Case 'lane status calls only an exact projected variant official' {
+    [IO.File]::WriteAllText($variant, '{"statusLine":{"command":"node %USERPROFILE%/.claude/plugin.js","type":"command"}}', [Text.UTF8Encoding]::new($false))
+    $profilePath = [IO.Path]::GetFullPath($profileRoot).Replace('\','/')
+    $projected = ([IO.File]::ReadAllText($variant)).Replace('%USERPROFILE%', $profilePath)
+    [IO.File]::WriteAllText($settings, $projected, [Text.UTF8Encoding]::new($false))
+    $officialHash = Hash $settings
+    $r = Lane @()
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('"current_lane":"official"')) $r.Text
+    Assert ((Hash $settings) -eq $officialHash) 'Status modified official settings'
+
+    [IO.File]::AppendAllText($settings, "`n")
+    $customHash = Hash $settings
+    $r = Lane @()
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('"current_lane":"custom"')) $r.Text
+    Assert ((Hash $settings) -eq $customHash) 'Status modified custom settings'
+    Write-Settings $relayText
+    [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
   }
   Case 'lane preview leaves bytes and journal untouched' {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
@@ -196,7 +318,7 @@ try {
     $r = Lane @('-ToOfficial')
     Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) $r.Text
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Preview wrote data'
-    Assert (@(Get-ChildItem $root -Filter '*.bak-claude-lane-*').Count -eq 0) 'Preview created backup'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count -eq 0) 'Preview created backup'
   }
   Case 'lane apply projects exact variant bytes with raw backup and idempotence' {
     $script:relayBeforeHash = Hash $settings
@@ -204,7 +326,7 @@ try {
     $r = Lane @('-ToOfficial','-Apply')
     Assert ($r.Code -eq 0) $r.Text
     Assert ((Hash $settings) -eq $variantHash) 'Settings differ from variant bytes'
-    $script:laneBackup = @(Get-ChildItem $root -Filter '*.bak-claude-lane-*')[0].FullName
+    $script:laneBackup = @(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*')[0].FullName
     Assert ((Hash $script:laneBackup) -eq $script:relayBeforeHash) 'Lane backup differs from raw original'
     $journalText = Get-Content -Raw -LiteralPath $journal
     Assert ($journalText.Contains('applied-readback-verified')) 'Journal missing verified phase'
@@ -230,6 +352,38 @@ try {
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before) 'Broken variant accepted'
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
   }
+  Case 'legacy repository template refresh is pinned to its exact historical digest' {
+    $expectedLegacyHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
+    $profilePath = [IO.Path]::GetFullPath($profileRoot).Replace('\','/')
+    $legacyTemplateText = $null
+    foreach ($commit in @(git -C $repo rev-list --all -- 'settings.official-anthropic.json' 2>$null)) {
+      $lines = @(git -C $repo show "$($commit):settings.official-anthropic.json" 2>$null)
+      if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0) { continue }
+      $candidate = [string]::Join("`n", $lines) + "`n"
+      $normalized = $candidate.Replace($profilePath, '%USERPROFILE%')
+      $candidateHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($normalized))).ToLowerInvariant()
+      if ($candidateHash -eq $expectedLegacyHash) { $legacyTemplateText = $candidate; break }
+    }
+    Assert (-not [string]::IsNullOrWhiteSpace($legacyTemplateText)) 'Exact previous official-template fixture was not found in Git history'
+    $legacyProjected = $legacyTemplateText.Replace('%USERPROFILE%', $profilePath)
+    $journalBefore = if (Test-Path $journal) { Hash $journal } else { '' }
+    foreach ($lineEnding in @('LF','CRLF')) {
+      $legacyCandidate = if ($lineEnding -eq 'CRLF') { $legacyProjected.Replace("`n", "`r`n") } else { $legacyProjected }
+      [IO.File]::WriteAllText($settings, $legacyCandidate, [Text.UTF8Encoding]::new($false))
+      $legacyHash = Hash $settings
+      $r = Lane @('-ToOfficial')
+      Assert ($r.Code -eq 0 -and $r.Text.Contains('refresh-known-official-template')) "${lineEnding}: $($r.Text)"
+      Assert ((Hash $settings) -eq $legacyHash -and ((Test-Path $journal) -eq [bool]$journalBefore)) "$lineEnding legacy preview modified settings or journal"
+    }
+
+    [IO.File]::AppendAllText($settings, "`n")
+    $modifiedHash = Hash $settings
+    $r = Lane @('-ToOfficial','-Apply')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('neither the relay form nor the exact previous repository template')) $r.Text
+    Assert ((Hash $settings) -eq $modifiedHash) 'Modified legacy settings were replaced'
+    if ($journalBefore) { Assert ((Hash $journal) -eq $journalBefore) 'Rejected legacy settings changed the journal' }
+    Write-Settings $relayText
+  }
   Case 'lane rollback rejects drift and restores exact bytes with another backup' {
     Write-Settings $variantText
     $current = Hash $settings
@@ -237,7 +391,7 @@ try {
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $current) 'Lane rollback ignored drift guard'
     $r = Lane @('-RollbackBackup',$script:laneBackup,'-ExpectedCurrentHash',$current,'-Apply')
     Assert ($r.Code -eq 0 -and $r.Text.Contains('APPLIED') -and (Hash $settings) -eq $script:relayBeforeHash) $r.Text
-    Assert (@(Get-ChildItem $root -Filter '*.bak-claude-lane-*').Count -eq 2) 'Rollback lane backup missing'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count -eq 2) 'Rollback lane backup missing'
   }
   Case 'variant placeholder projects the current profile instead of a literal path' {
     Write-Settings $relayText
@@ -245,7 +399,7 @@ try {
     $r = Lane @('-ToOfficial','-Apply')
     Assert ($r.Code -eq 0) $r.Text
     $projected = Get-Content -Raw -LiteralPath $settings
-    $profile = [IO.Path]::GetFullPath($root).Replace('\','/')
+    $profile = [IO.Path]::GetFullPath($profileRoot).Replace('\','/')
     Assert ($projected.Contains("node $profile/.claude/plugin.js")) $projected
     Assert (-not $projected.Contains('%USERPROFILE%')) 'Placeholder was projected literally'
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
