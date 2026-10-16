@@ -147,6 +147,11 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
   整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
 - 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
 - ToOfficial 仅接受已识别 relay 形态、与当前模板一致，或规范化 USERPROFILE 并将换行统一为 LF 后 SHA256 等于仓库已知上一版模板摘要的现状；未识别配置直接拒绝，保留人工审查。
+- ToRelay 用 `-RelayVariant` 指向一份**仓外**自备的 relay 设置文件，把它投影成新的机器设置；工具只是切换器，
+  既不生成、不保存、也不回显其中任何取值，journal 只记动作名与哈希。源文件同样支持 `%USERPROFILE%` 占位。
+- ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含 `env.ANTHROPIC_BASE_URL`，
+  且不得含 `apiKeyHelper` 或 `hooks`；其他现状先 `-ToOfficial` 再切。文件放在仓库外本机目录，命名含 `token`/`credentials`
+  可落入模板 deny 列表的读取拦截范围。
 - 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
   即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
 - 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
@@ -164,8 +169,13 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1                      # 只读 status
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial          # 预览
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial -Apply   # 切换 + 备份 + 日志
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToRelay -RelayVariant '<仓外 relay 源文件绝对路径>'          # 预览
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToRelay -RelayVariant '<仓外 relay 源文件绝对路径>' -Apply   # 切换 + 备份 + 日志
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -RollbackBackup '<APPLIED 输出的备份绝对路径>' -ExpectedCurrentHash '<after_sha256>'
 ```
+
+relay 源文件由操作者自备并在本机保管；本仓不提供网关端点、凭据，也不因切换 lane 而改变第 1 节与
+第 8 节的资格判断或第三方通道授权结论。
 
 ### 隔离官方 Claude Code 的启动环境
 

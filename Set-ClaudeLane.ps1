@@ -3,21 +3,24 @@
 param(
   [switch]$Apply,
   [switch]$ToOfficial,
+  [switch]$ToRelay,
   [switch]$OfficialPreflight,
   [switch]$LaunchOfficial,
   [string]$SettingsPath = (Join-Path $env:USERPROFILE '.claude/settings.json'),
   [string]$VariantPath = (Join-Path $PSScriptRoot 'settings.official-anthropic.json'),
   [string]$JournalPath = (Join-Path $PSScriptRoot 'machine-journal.md'),
+  [string]$RelayVariant = '',
   [string]$RollbackBackup = '',
   [string]$ExpectedCurrentHash = ''
 )
 $ErrorActionPreference = 'Stop'
-if (@(@($ToOfficial,$OfficialPreflight,$LaunchOfficial,[bool]$RollbackBackup) | Where-Object { $_ }).Count -gt 1) {
-  throw 'Choose one action: ToOfficial, OfficialPreflight, LaunchOfficial, or RollbackBackup.'
+if (@(@($ToOfficial,$ToRelay,$OfficialPreflight,$LaunchOfficial,[bool]$RollbackBackup) | Where-Object { $_ }).Count -gt 1) {
+  throw 'Choose one action: ToOfficial, ToRelay, OfficialPreflight, LaunchOfficial, or RollbackBackup.'
 }
-if (($OfficialPreflight -or $LaunchOfficial) -and ($Apply -or $ExpectedCurrentHash)) {
+if (($OfficialPreflight -or $LaunchOfficial) -and ($Apply -or $ExpectedCurrentHash -or $RelayVariant)) {
   throw 'Official process actions cannot be combined with file-write or rollback options.'
 }
+if (-not [string]::IsNullOrWhiteSpace($RelayVariant) -and -not $ToRelay) { throw 'RelayVariant requires ToRelay.' }
 $legacyOfficialTemplateHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
 
 function Test-OfficialOverride([string]$Name) {
@@ -70,6 +73,9 @@ function Test-RelayLane($Json) {
   $envKeys = @($Json.Keys | Where-Object { [string]$_ -ieq 'env' })
   if ($envKeys.Count -ne 1 -or $Json[$envKeys[0]] -isnot [Collections.IDictionary]) { return $false }
   return (@($Json[$envKeys[0]].Keys | Where-Object { [string]$_ -ieq 'ANTHROPIC_BASE_URL' })).Count -gt 0
+}
+function Test-KeyPresent($Json, [string]$Name) {
+  return (@($Json.Keys | Where-Object { [string]$_ -ieq $Name }).Count) -gt 0
 }
 function Test-LegacyOfficialTemplate([byte[]]$Bytes) {
   if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $false }
@@ -140,7 +146,7 @@ if ($OfficialPreflight -or $LaunchOfficial) {
 }
 
 # Default invocation is a read-only status report.
-if (-not $ToOfficial -and -not $RollbackBackup) {
+if (-not $ToOfficial -and -not $ToRelay -and -not $RollbackBackup) {
   $lane = 'missing'
   $settingsBytes = $null
   if (Test-Path -LiteralPath $SettingsPath -PathType Leaf) {
@@ -193,25 +199,49 @@ if ($RollbackBackup) {
   $actions = @('restore-lane-backup')
 } else {
   if ($ExpectedCurrentHash) { throw 'ExpectedCurrentHash requires RollbackBackup.' }
+  if ($ToRelay -and [string]::IsNullOrWhiteSpace($RelayVariant)) {
+    throw 'ToRelay requires -RelayVariant, the caller-supplied relay settings file kept outside this repository.'
+  }
   if (Get-Process -Name 'cc-switch' -ErrorAction SilentlyContinue) { throw 'cc-switch is running and rewrites settings.json; close it before switching lanes.' }
   Assert-EntryTarget $settings 'Settings'
   Assert-EntryTarget ([IO.Path]::GetFullPath($VariantPath)) 'Variant'
   $beforeBytes = [IO.File]::ReadAllBytes($settings)
   $beforeHash = Get-Hash $beforeBytes
   $beforeJson = Read-Json $beforeBytes
-  # The in-repo variant stays portable: it carries %USERPROFILE% instead of a real
-  # user path, so it is correct on any machine and the repo never stores a username.
-  $afterBytes = Get-ProjectedVariantBytes $VariantPath
-  $afterHash = Get-Hash $afterBytes
-  if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the official variant)'; exit 0 }
-  # Whole-file replacement is only offered from an identified relay form or the
-  # exact previous repository template; other settings require manual review.
-  if (Test-RelayLane $beforeJson) {
-    $actions = @('switch-lane-to-official')
-  } elseif (Test-LegacyOfficialTemplate $beforeBytes) {
-    $actions = @('refresh-known-official-template')
+  if ($ToRelay) {
+    # The relay source lives outside the repository: this tool never stores a
+    # gateway credential, and it never prints or journals a value from the file.
+    Assert-EntryTarget ([IO.Path]::GetFullPath($RelayVariant)) 'Relay variant'
+    # Projection keeps the caller's file portable and validates it as JSON.
+    $afterBytes = Get-ProjectedVariantBytes $RelayVariant
+    $afterHash = Get-Hash $afterBytes
+    $relayJson = Read-Json $afterBytes
+    if (-not (Test-RelayLane $relayJson)) { throw 'Relay variant must declare env.ANTHROPIC_BASE_URL; no replacement.' }
+    if ($relayJson['apiKeyHelper']) { throw 'Relay variant contains a credential helper; no replacement.' }
+    if (Test-KeyPresent $relayJson 'hooks') { throw 'Relay variant declares hooks; this repository does not register automatic hooks.' }
+    if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the relay variant)'; exit 0 }
+    $officialBytes = Get-ProjectedVariantBytes $VariantPath
+    # Symmetric with ToOfficial: whole-file replacement only from the official
+    # lane, or from an already identified relay form when re-pointing it.
+    if ((Get-Hash $officialBytes) -ne $beforeHash -and -not (Test-RelayLane $beforeJson)) {
+      throw 'Current settings are neither the official variant nor the relay form; refresh to the official lane first, then switch.'
+    }
+    $actions = @('switch-lane-to-relay')
   } else {
-    throw 'Current settings are neither the relay form nor the exact previous repository template; no whole-file replacement.'
+    # The in-repo variant stays portable: it carries %USERPROFILE% instead of a real
+    # user path, so it is correct on any machine and the repo never stores a username.
+    $afterBytes = Get-ProjectedVariantBytes $VariantPath
+    $afterHash = Get-Hash $afterBytes
+    if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the official variant)'; exit 0 }
+    # Whole-file replacement is only offered from an identified relay form or the
+    # exact previous repository template; other settings require manual review.
+    if (Test-RelayLane $beforeJson) {
+      $actions = @('switch-lane-to-official')
+    } elseif (Test-LegacyOfficialTemplate $beforeBytes) {
+      $actions = @('refresh-known-official-template')
+    } else {
+      throw 'Current settings are neither the relay form nor the exact previous repository template; no whole-file replacement.'
+    }
   }
 }
 $afterHash = Get-Hash $afterBytes

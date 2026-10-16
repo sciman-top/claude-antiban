@@ -473,6 +473,61 @@ try {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
     Write-Settings $relayText
   }
+  Case 'relay lane switch projects a repo-external variant without printing or journalling values' {
+    $relayVariant = Join-Path $profileRoot 'relay-variant.json'
+    $relaySource = '{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"},"permissions":{"defaultMode":"default","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}'
+    [IO.File]::WriteAllText($relayVariant, $relaySource, [Text.UTF8Encoding]::new($false))
+    Write-Settings $variantText
+    $before = Hash $settings; $journalBefore = Hash $journal
+    $r = Lane @('-ToRelay','-RelayVariant',$relayVariant)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW') -and $r.Text.Contains('switch-lane-to-relay') -and $r.Text.Contains('full-file-replacement=true')) $r.Text
+    Assert (-not $r.Text.Contains('secret-fixture') -and -not $r.Text.Contains('relay-fixture.invalid')) 'Relay preview leaked a value'
+    Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Relay preview wrote data'
+    $backupsBefore = @(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count
+    $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('APPLIED')) $r.Text
+    Assert ((Hash $settings) -eq (Hash $relayVariant)) 'Settings differ from the relay variant bytes'
+    Assert (@(Get-ChildItem $profileRoot -Filter '*.bak-claude-lane-*').Count -eq ($backupsBefore + 1)) 'Relay switch created no raw backup'
+    $journalText = Get-Content -Raw -LiteralPath $journal
+    Assert ($journalText.Contains('switch-lane-to-relay') -and $journalText.Contains('applied-readback-verified')) 'Relay journal entry incomplete'
+    Assert (-not $journalText.Contains('secret-fixture') -and -not $journalText.Contains('relay-fixture.invalid') -and -not $journalText.Contains($root)) 'Relay journal leaked a value or path'
+    $r = Lane @()
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('"current_lane":"relay"') -and -not $r.Text.Contains('secret-fixture')) $r.Text
+    $journalHash = Hash $journal
+    $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('NO_CHANGE') -and (Hash $journal) -eq $journalHash) $r.Text
+    $r = Lane @('-ToOfficial','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+    Assert ($r.Code -eq 0 -and (Hash $settings) -eq (Hash $relayVariant)) 'Returning to the relay lane failed'
+    Write-Settings $relayText
+  }
+  Case 'relay lane switch refuses unidentified, credential-helper and hook variants' {
+    $relayVariant = Join-Path $profileRoot 'relay-variant.json'
+    $relaySource = '{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"}}'
+    Write-Settings $variantText
+    $before = Hash $settings
+    $r = Lane @('-ToRelay')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('-RelayVariant')) $r.Text
+    $r = Lane @('-RelayVariant',$relayVariant)
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('RelayVariant requires ToRelay')) $r.Text
+    foreach ($text in @('{"env":{"KEEP":"value-fixture"}}','{"env":[]}','{"env":"value-fixture"}','{"apiKeyHelper":"fixture-helper","env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic"}}','{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic"},"hooks":{"SessionStart":[]}}')) {
+      [IO.File]::WriteAllText($relayVariant, $text, [Text.UTF8Encoding]::new($false))
+      $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+      Assert ($r.Code -ne 0 -and -not $r.Text.Contains('secret-fixture')) "Relay variant accepted: $text"
+      Assert ((Hash $settings) -eq $before) "Relay variant replaced settings: $text"
+    }
+    [IO.File]::WriteAllText($relayVariant, $relaySource, [Text.UTF8Encoding]::new($false))
+    Write-Settings '{"env":{"KEEP":"value-fixture"}}'
+    $custom = Hash $settings
+    $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('neither the official variant nor the relay form')) $r.Text
+    Assert ((Hash $settings) -eq $custom) 'Custom settings were replaced by the relay variant'
+    Write-Settings $variantText
+    $r = Lane @('-ToRelay','-RelayVariant',(Join-Path $profileRoot 'absent-relay-variant.json'),'-Apply')
+    Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before) 'Missing relay variant was accepted'
+    Write-Settings $relayText
+  }
   Case 'tracked files carry no raw infrastructure identifiers' {
     # Regression barrier for the 2026-10-15 leaks: a real egress IP, hostname,
     # user path, proxy provider or endpoint domain must never reach a tracked

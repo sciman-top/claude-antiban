@@ -5,7 +5,7 @@
 
 ## 1. 落点与真源
 - 本仓保留历史目录名，负责 Claude 使用资格说明、只读环境诊断与可选用户配置修复，不保证防封。操作说明真源为 `RUNBOOK.md`，运行行为以脚本为准。
-- 五个入口：`prep-registration.ps1`（只读预检）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；切换默认预览；OfficialPreflight 隔离预检、LaunchOfficial 显式启动）。
+- 五个入口：`prep-registration.ps1`（只读预检）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；切换默认预览；ToRelay 按操作者自备的仓外源文件切换；OfficialPreflight 隔离预检、LaunchOfficial 显式启动）。
 - CPA 部署、目录、运行防护与远端维护保留在 `D:\CODE\vps-ssh-launcher`；skills-manager 保留通用技能/MCP 管理，不复制为本仓运行代码。
 
 ## A. 不变量
@@ -14,7 +14,7 @@
 - 不注册自动 hook；SessionStart 的 exit 2 不阻断会话或模型请求。历史 hook 只按精确路径与已知命令形式移除，保留未知命令及其他配置。
 - 官方进程入口只清理其子进程中的认证、配置目录、provider、模型覆盖和 TLS 验证关闭变量，保留代理/CA 与父进程；启动前须匹配官方模板、无 key helper 且 CC Switch 未运行。CLI 仅加载 user settings，managed 设置仍生效；不把此隔离外推到 Desktop 或真实出口。
 - 机器写入入口一 `install.ps1 -Apply`：仅精确移除本仓历史 SessionStart action，或显式补齐 HTTP_PROXY/HTTPS_PROXY；既有异值拒绝，大小写不重复写，遥测配置不改。
-- 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，只接受已识别 relay 形态或哈希识别的上一版仓库模板）或 `-RollbackBackup`（哈希钉死回滚）；install/lane 均在预览及写入前拒绝运行中的 CC Switch；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
+- 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，只接受已识别 relay 形态或哈希识别的上一版仓库模板）、`-ToRelay -RelayVariant`（整文件投影操作者自备的仓外 relay 源文件；源文件须含 `env.ANTHROPIC_BASE_URL`、无 key helper 与 hooks，现状须为官方模板或已识别 relay；本仓不保存凭据，输出与 journal 不回显其中取值）或 `-RollbackBackup`（哈希钉死回滚）；install/lane 均在预览及写入前拒绝运行中的 CC Switch；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
 - 每次机器写入必须创建原字节备份并 append `machine-journal.md`（准备/读回阶段及哈希）；恢复必须绑定当前哈希，保留后续修改。运行安装器时避免其他客户端/工具同时写配置。
 - `chrome-data/`、`qa/throwaway/` 永不入库；不得为回滚删除会话数据。机器配置与凭据只留本机。
 - 公开远端仅接受脱敏内容：推送前按 RUNBOOK.md 第 7 节核对；2026-10-16 起公开远端以脱敏副本单根历史维护，早期完整历史在核对末态一致后删除、不留副本。新增条目不得引入出口 IP、代理供应商、端点域名、部署拓扑、真实主机名或用户路径。
