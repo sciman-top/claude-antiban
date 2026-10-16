@@ -330,9 +330,9 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
   “Access, facilitate, or provide others (including end users) with access to our products or
   services in violation of our Supported Regions Policy”；
   “Intentionally bypass or interfere with capabilities, restrictions, or guardrails established
-  within our products, including by circumvention of the account sign-up or log-in process”；
+  within our products, including by circumvention of the account sign-up or log-in process…”；
   “Utilize automation in account creation or to engage in spammy behavior”；
-  “Circumvent a ban through the use of a different account”；
+  “Circumvent a ban through the use of a different account…”；
   “Resell, proxy, or otherwise provide access to Claude through unauthorized means, including
   services that route requests through consumer subscriptions or misrepresent the product or
   client being used”。执行后风险不是下降，而是从不合格叠加“记录在案的规避”，
