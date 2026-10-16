@@ -77,7 +77,10 @@ foreach ($launcherFile in $launcherFiles) {
   Write-Output ('LAUNCHER=' + $launcherFile.Name + ' flags=' + $(if ($flags.Count -eq 0) { 'none' } else { $flags -join ',' }))
 }
 $sealingLaunchers = @($launcherFiles | Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match 'force-webrtc-ip-handling-policy=disable_non_proxied_udp' } | ForEach-Object { $_.Name })
-Write-Output ('WEBRTC_NON_PROXIED_UDP=' + $(if ($sealingLaunchers.Count -gt 0) { 'sealed-by-launcher ' + ($sealingLaunchers -join ',') } else { 'allowed (chrome default; no launcher sets a WebRTC policy)' }))
+# Reading a launcher proves configuration only; it cannot establish the policy
+# loaded by an existing browser process or the candidates it actually emits.
+Write-Output ('WEBRTC_NON_PROXIED_UDP=' + $(if ($sealingLaunchers.Count -gt 0) { 'configured-by-launcher ' + ($sealingLaunchers -join ',') } else { 'not-configured-by-launcher' }))
+Write-Output 'WEBRTC_RUNTIME=not-verified; launcher inspection does not inspect a running browser or Claude Desktop.'
 
 $preferencesPath = Join-Path $RepoRoot 'chrome-data/Default/Preferences'
 if (Test-Path -LiteralPath $preferencesPath -PathType Leaf) {

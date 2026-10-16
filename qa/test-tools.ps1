@@ -323,7 +323,9 @@ try {
     Assert ($r.Code -eq 0) $r.Text
     Assert ($r.Text -match '(?m)^LAUNCHER=start-claude-chrome\.cmd flags=user-data-dir,no-first-run\r?$') $r.Text
     Assert ($r.Text -match '(?m)^LAUNCHER=start-claude-chrome-leakless\.cmd flags=user-data-dir,no-first-run,force-webrtc-ip-handling-policy\r?$') $r.Text
-    Assert ($r.Text -match '(?m)^WEBRTC_NON_PROXIED_UDP=sealed-by-launcher start-claude-chrome-leakless\.cmd\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^WEBRTC_NON_PROXIED_UDP=configured-by-launcher start-claude-chrome-leakless\.cmd\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^WEBRTC_RUNTIME=not-verified;') $r.Text
+    Assert ($r.Text -notmatch 'sealed-by-launcher') $r.Text
     Assert ($r.Text -match '(?m)^BROWSER_PROFILE=present languages=en-US,en\r?$') $r.Text
     Assert ($r.Text -match '(?m)^WEBRTC_POLICY_OVERRIDE=present\r?$') $r.Text
     Assert ($r.Text -match '(?m)^EAST_ASIAN_FONTS_PRESENT=(True|False|unavailable)\r?$') $r.Text

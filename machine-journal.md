@@ -125,3 +125,45 @@ exit=0（期望 0）
 - before_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
 - after_sha256: 70e7edc85f88a28b671c8f81f2607a4b478b838f9ff6a5f1256d133b75b7d688
 - phase: applied-readback-verified
+
+## 2026-10-17T01:29:23.2394355+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: switch-lane-to-official
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-lane-e78c0358295d42f1b95c7f7075d191a8
+- before_sha256: 70e7edc85f88a28b671c8f81f2607a4b478b838f9ff6a5f1256d133b75b7d688
+- after_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
+- phase: applied-readback-verified
+
+## 2026-10-17T01:31:01.6462854+08:00 | <HOST-f7563cc1>
+- operation: cc-switch-orphan-pointer-repair
+- phase: prepared
+- actions: currentProviderClaude,currentProviderClaudeDesktop
+- backup: %USERPROFILE%\.cc-switch\backups\claude-pointer-repair-20261017-4c5738cda61d4ebd9f24f447a3fda831\settings.before.json
+- before_sha256: 41802a83f48b0a6d8ee01b8c88cb5c4ba6cb0578d6d2302c71c1d8d074db74c8
+- after_sha256: 781d6c3d2e523496eecee050e86ae21cefbcdb99cf30527e0a6468a959954f86
+- database: read-only; no provider, endpoint or credential changes
+- phase: applied-readback-verified
+
+## 2026-10-17T01:33:35.0426512+08:00 | <HOST-f7563cc1>
+- operation: cc-switch-orphan-pointer-repair
+- phase: prepared
+- actions: restore-cc-switch-pointer-backup
+- backup: %USERPROFILE%\.cc-switch\backups\claude-pointer-repair-20261017-4c5738cda61d4ebd9f24f447a3fda831\settings.before-rollback-1ea9aa6e0cc74003802abbe274a83e11.json
+- before_sha256: 781d6c3d2e523496eecee050e86ae21cefbcdb99cf30527e0a6468a959954f86
+- after_sha256: 41802a83f48b0a6d8ee01b8c88cb5c4ba6cb0578d6d2302c71c1d8d074db74c8
+- database: read-only; no provider, endpoint or credential changes
+- phase: applied-readback-verified
+
+## 2026-10-17T01:33:54.2720819+08:00 | <HOST-f7563cc1>
+- operation: cc-switch-orphan-pointer-repair
+- phase: prepared
+- actions: currentProviderClaude,currentProviderClaudeDesktop
+- backup: %USERPROFILE%\.cc-switch\backups\claude-pointer-repair-20261017-4c5738cda61d4ebd9f24f447a3fda831-v2\settings.before.json
+- before_sha256: 41802a83f48b0a6d8ee01b8c88cb5c4ba6cb0578d6d2302c71c1d8d074db74c8
+- after_sha256: efd2b55b86761c89293a8d1b0f3606586adca2c52c31b86b181cec0d9c2de926
+- database: read-only; no provider, endpoint or credential changes
+- phase: applied-readback-verified
+- verification: final settings differ semantically by exactly the two removed pointer keys; timestamp strings and all other fields preserved; database SHA256 unchanged; repeat returned NO_CHANGE
+- recovery: the first serialization changed an unrelated timestamp format; hash-bound rollback restored original bytes before the corrected repair using DateKind String; only this final attempt has semantic acceptance
+- rollback: run repair.ps1 beside this backup with -Rollback -ExpectedCurrentHash efd2b55b86761c89293a8d1b0f3606586adca2c52c31b86b181cec0d9c2de926; preview first, then -Apply; newer settings or database hashes are refused
+- boundary: filesystem_projected; no client restart, OAuth login, token refresh or model request

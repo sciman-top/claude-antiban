@@ -323,7 +323,9 @@ issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接�
 - 站点健康时的复测步骤：`start-claude-chrome-leakless.cmd` 打开仓库窗口 → 访问
   `https://checkcc.org/` → 点「立即检测 Claude 环境」→ 对照本节的 WebRTC 两项与
   「首个 WebRTC 泄漏 IP」形态。浏览器候选的自查不依赖第三方站点：
-  `Get-SurfaceReport.ps1` 报出的启动器策略为 `sealed-by-launcher` 即表示密封入口已生效。
+  `Get-SurfaceReport.ps1` 的 `configured-by-launcher` 只表示启动器文件已配置该策略；
+  `WEBRTC_RUNTIME=not-verified` 明确表示未检查运行中的浏览器，不能据此认定策略已经加载。
+  实际生效须核对目标 profile 的浏览器启动参数并观察 ICE 候选；不能外推到 Claude Desktop。
 
 同日第二轮定位（用于排除本仓回归）：同一时段、同一出口，另起全新空 profile 并
 **不带** WebRTC 策略参数跑同一站点，检测同样停在「检测中」不推进。因此该停滞既不是
