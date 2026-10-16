@@ -54,3 +54,9 @@ exit=0（期望 0）
 - 验证: 事务后读回——providers/provider_endpoints 按 app_type 计数 claude-desktop=0 且其余分组计数不变；模板重解析 JSON 合法且零锁定键
 - 回滚: 关闭 CC Switch 后用该快照整库恢复
 - 执行来源: 相邻 vps-ssh-launcher 会话主代理（用户授权的修复事务）
+
+## 2026-10-16T08:46:10+08:00 | <HOST-f7563cc1>
+- 动作: 删除单根历史改写前保存的完整历史 bundle（D:\CODE\claude-antiban-history-private-20261016.bundle）以及本机隔离克隆暂存
+- 依据: 公开远端 origin/main 已含全部 16 个跟踪文件；旧末态与公开树的内容差异只有 LICENSE、本文件措辞与脱敏检查脚本，无独有内容；本机 .git 已不含旧对象
+- 验证: git rev-list origin/main = 4；旧 tip 对象在本机 git cat-file 已不可取；已推送历史对出口 IP、主机名、用户路径与端口的扫描 0 命中
+- 回滚: 不可逆；公开远端只保留脱敏后的单根历史，旧提交序列不再保留副本
