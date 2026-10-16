@@ -20,6 +20,7 @@
   处理；不通过清设备标识或新号重试来验证“是否解封”。
 
 本地预检输出 `ELIGIBILITY=not-determined`，不会根据 IP 自动签发“允许使用”结论。
+两个分支的具体动作见第 8 节：资格不成立时停在本地准备，资格成立后按合规口径使用。
 
 ## 2. 每个环境要检查什么
 
@@ -312,3 +313,51 @@ append-only 指操作历史而言：历史条目里已经出现的凭据、订�
 仅迁移代码不代表完成新机投影，也不代表必须重做每项修改。
 本仓不会自动配置 Windows 系统代理、代理客户端、Desktop、凭据或远端 CPA；
 需要这些变更时先明确该机器的实际差异、操作范围和回滚方式。
+
+## 8. 两个分支：资格不成立时停止，资格成立后按合规口径使用
+
+本仓只区分下面两个分支，不存在“先把本地环境处理好再注册”的第三条路径：
+Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop 与远端 CPA 的配置
+都不能改变第 1 节的资格判断。本节政策引用于 2026-10-16 线上核对原文。
+
+### A. 资格不成立（当前默认分支）
+
+- 停在本地准备：只运行第 3、4 节的只读预检与可选配置修复，不注册、不登录、不发模型请求。
+- 不实施、本仓也不实现这些动作：改时区或区域设置伪装所在地；安装防检测浏览器或指纹清洗工具；
+  伪造 device ID、UA 或会话状态；用代理、住宅出口或 VPS 把所在地替换为受支持地区；
+  用 CPA 或其他网关代持、中转订阅凭据；创建多账号或换号；以“测试风险”为目的注册账号后再观察。
+- 上述动作逐一命中 Usage Policy `Do Not Abuse Our Platform` 段落的原文：
+  “Access, facilitate, or provide others (including end users) with access to our products or
+  services in violation of our Supported Regions Policy”；
+  “Intentionally bypass or interfere with capabilities, restrictions, or guardrails established
+  within our products, including by circumvention of the account sign-up or log-in process”；
+  “Utilize automation in account creation or to engage in spammy behavior”；
+  “Circumvent a ban through the use of a different account”；
+  “Resell, proxy, or otherwise provide access to Claude through unauthorized means, including
+  services that route requests through consumer subscriptions or misrepresent the product or
+  client being used”。执行后风险不是下降，而是从不合格叠加“记录在案的规避”，
+  并影响后续官方申诉。
+- 政策或实际情况变化时重新核对原文，不凭旧结论沿用：
+  [Supported Regions Policy](https://www.anthropic.com/legal/supported-regions)、
+  [Usage Policy](https://www.anthropic.com/legal/aup)、
+  [Consumer Terms](https://www.anthropic.com/legal/consumer-terms)。
+
+### B. 资格成立后（实际所在地与主体均在受支持范围）
+
+此时不需要任何“防封技巧”，按官方口径正常使用即可：
+
+- 账户：使用真实、准确、本人有权使用的信息；不共享账户登录信息、凭据或 API key
+  （Consumer Terms 第 2 节）。误判或停用时保存脱敏错误与时间，通过
+  [官方警告与申诉说明](https://support.claude.com/en/articles/8241253-safeguards-warnings-and-appeals)
+  处理，不靠清标识或新号试探“是否解封”。
+- 付款：使用本人有权使用的真实付款方式，不借助来历不明的账号或渠道。
+- 客户端：官方发行版本与官方认证流程，保持系统、工具与证书更新。第三方客户端不得伪装成
+  Claude Code，也不得代持订阅凭据（[Claude Code 合规说明](https://code.claude.com/docs/en/legal-and-compliance)）。
+- 网络：单账号使用稳定出口。Claude Code 用 HTTP/HTTPS 代理并保留 TLS 验证，不支持 SOCKS；
+  分别核对 Process / User / Machine 与各 settings 层级的实际继承，不靠一次请求推断路由。
+- 用量：按产品限额与 Retry-After 正常使用，避免无意义并发与重复发送。
+- 网关：官方 API 与授权云通道按各自合同使用；授权云通道仍受地区政策约束，不构成绕过。
+
+两个分支都不改变第 6 节的证据分层：本地只读检查与 fixture 为 repo_verified，
+本机设置读回为 filesystem_projected；客户端实际加载与真实使用需各自独立证据，
+在资格未解决前不通过真实账号试验补齐。
