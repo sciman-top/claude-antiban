@@ -5,13 +5,14 @@
 
 ## 1. 落点与真源
 - 本仓保留历史目录名，负责 Claude 使用资格说明、只读环境诊断与可选用户配置修复，不保证防封。操作说明真源为 `RUNBOOK.md`，运行行为以脚本为准。
-- 五个入口：`prep-registration.ps1`（只读预检）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；lane 切换默认预览）。
+- 五个入口：`prep-registration.ps1`（只读预检）、`hooks/check-exit-ip.ps1`（手动出口诊断）、`start-claude-chrome.cmd`（普通独立 profile）、`install.ps1`（默认预览的配置修复）、`Set-ClaudeLane.ps1`（默认只读 status；切换默认预览；OfficialPreflight 隔离预检、LaunchOfficial 显式启动）。
 - CPA 部署、目录、运行防护与远端维护保留在 `D:\CODE\vps-ssh-launcher`；skills-manager 保留通用技能/MCP 管理，不复制为本仓运行代码。
 
 ## A. 不变量
 - 实际所在地与主体资格按官方政策核对；代理出口、时区、语言、指纹或检测分数不代替资格。不自动注册、登录、调用模型或改动时区、凭据及设备标识。
 - 无固定出口默认值；出口检查须显式选择 HTTP/HTTPS 代理，只证明诊断请求当时的出口，不证明其他客户端、账号或未来路由。
 - 不注册自动 hook；SessionStart 的 exit 2 不阻断会话或模型请求。历史 hook 只按精确路径与已知命令形式移除，保留未知命令及其他配置。
+- 官方进程入口只清理其子进程中的认证、配置目录、provider、模型覆盖和 TLS 验证关闭变量，保留代理/CA 与父进程；启动前须匹配官方模板、无 key helper 且 CC Switch 未运行。CLI 仅加载 user settings，managed 设置仍生效；不把此隔离外推到 Desktop 或真实出口。
 - 机器写入入口一 `install.ps1 -Apply`：仅精确移除本仓历史 SessionStart action，或显式补齐 HTTP_PROXY/HTTPS_PROXY；既有异值拒绝，大小写不重复写，遥测配置不改。
 - 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，只接受已识别 relay 形态或哈希识别的上一版仓库模板）或 `-RollbackBackup`（哈希钉死回滚）；install/lane 均在预览及写入前拒绝运行中的 CC Switch；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
 - 每次机器写入必须创建原字节备份并 append `machine-journal.md`（准备/读回阶段及哈希）；恢复必须绑定当前哈希，保留后续修改。运行安装器时避免其他客户端/工具同时写配置。

@@ -85,3 +85,27 @@ exit=0（期望 0）
 - before_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
 - after_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
 - phase: applied-readback-verified
+
+## 2026-10-16 | <HOST-99e0671a>（补记：CC Switch claude 分组与合并模板修复）
+- 动作: 人工 sqlite 事务（非本仓写入器）——删除 cc-switch.db 中 claude 分组 3 个中继 provider 及其 3 条 endpoint（均含 ANTHROPIC_BASE_URL，其一为当前激活项）；同批清洗 settings 表 common_config_claude 模板：移除 DISABLE_LOGIN_COMMAND/DISABLE_LOGOUT_COMMAND/DISABLE_UPGRADE_COMMAND/DISABLE_EXTRA_USAGE_COMMAND、CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK/CLAUDE_CODE_ATTRIBUTION_HEADER/CLAUDE_CODE_MAX_OUTPUT_TOKENS/CLAUDE_CODE_EFFORT_LEVEL 八键与顶层 model 钉定
+- 备份: %USERPROFILE%\.cc-switch\backups\manual-pre-claude-official-clean-20261016-150847.db（操作前 sqlite backup API 全量快照）
+- 验证: 事务后读回——providers/provider_endpoints 按 app_type 计数 claude=0 且其余分组（codex/gemini）计数不变；模板重解析 JSON 合法且零锁定键、无顶层 model
+- 回滚: 关闭 CC Switch 后用该快照整库恢复
+- 执行来源: claude-antiban 会话主代理（用户授权"按推荐连续执行修复和优化"）；与 <HOST-f7563cc1> 2026-10-16 同型修复对齐。本机 ~/.claude/settings.json 未受影响（CC Switch 全程未运行），lane 保持 official
+
+## 2026-10-16T15:17:47 | <HOST-b23a6a84>
+- operation: cc-switch-official-profile
+- phase: prepared
+- backup: %USERPROFILE%/.cc-switch/claude-official-repair-581e510c5a01410782cc245fb6a63524
+- before_sha256: 20de04799cdd0e7781ef544973763a12aca57b2d044629cfd49846ce8a125d41,7cb03bf9ad286a6a955a97dae0780eed65b7943bc1c7c31617020549adc7504f
+
+## 2026-10-16T15:17:47 | <HOST-b23a6a84>
+- operation: cc-switch-official-profile
+- phase: applied-readback-verified
+- backup: %USERPROFILE%/.cc-switch/claude-official-repair-581e510c5a01410782cc245fb6a63524
+- after_sha256: 2d02423eefbe8e86f7e05baf43016bd53b297972a614c5b5897b7213179b269b,845e345641c1a2e5379635995f1fc6c0cd19ed73a30a36371d07c10705b7e684
+- verification: accepted empty Claude group retained; other app groups and credentials preserved; no client launched
+- actions: accepted the concurrent empty Claude provider group; removed orphan currentProviderClaude and residual CLAUDE_CODE_SUBAGENT_MODEL only
+- rollback: close CC Switch; run repair.py beside receipt.json with --rollback <this backup directory> and --expected <both after hashes>; preview before --apply; changed current or backup hashes are refused
+- evidence: raw database and preferences backups verified; fixture covered no-op, drift refusal, exact rollback and concurrent-provider refusal; real client launch and account acceptance not performed
+- rollback-scope: earlier full-database snapshot instructions are historical only; do not overwrite subsequent changes. The hash-bound repair.py rollback restores only this supplemental repair and does not recreate the deleted providers.

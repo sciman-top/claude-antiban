@@ -137,6 +137,8 @@ pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>'
 无参数调用只输出只读 status：`current_lane=relay` 表示用户设置含 `ANTHROPIC_BASE_URL`，
 `official` 表示字节与当前模板投影结果完全一致，`custom` 表示其他有效设置，`missing` 表示文件缺失。
 status 只分类设置文件，不证明进程实际路由或账号资格；lane 切换是本机配置管理，不影响第 1 节的资格判断。
+status 同时返回 `process_overrides_present`（仅变量名）及 `route_verified=false`；
+即使 `current_lane=official`，父进程的中继环境仍可能影响普通启动的 Claude。
 
 - 默认仅预览，`-Apply` 才写文件；整文件切换不保留模板之外的键，模板修改在仓内进行并随 Git 提交。
 - 模板用 `%USERPROFILE%` 表示当前用户目录，写入时替换为实际路径；模板本身不含用户名，可直接跨机使用。
@@ -154,6 +156,31 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial          # 预览
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -ToOfficial -Apply   # 切换 + 备份 + 日志
 pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -RollbackBackup '<APPLIED 输出的备份绝对路径>' -ExpectedCurrentHash '<after_sha256>'
 ```
+
+### 隔离官方 Claude Code 的启动环境
+
+已确认实际资格后，使用现有入口准备官方 CLI 环境：
+
+```powershell
+# 只读、不联网：验证模板，并在隔离子进程内运行预检
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -OfficialPreflight
+# 明确要打开客户端时运行；本仓自动验收不执行此命令
+pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -LaunchOfficial
+```
+
+两种动作均要求设置与模板字节一致，拒绝模板中的认证 helper、路由覆盖和运行中的
+CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、订阅 token 环境变量、Bedrock/Vertex/Foundry
+选择开关、已知模型/请求覆盖、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
+父进程、User/Machine 环境、凭据文件均不改写；HTTP/HTTPS/ALL_PROXY/NO_PROXY、
+自定义 CA 与隐私偏好原样保留，不预设应当直连。
+
+显式启动会打开新的无 profile PowerShell，从用户目录运行
+`claude --setting-sources user`，避免当前仓库的 project/local 配置覆盖；managed settings
+仍然适用。预检只验证新 PowerShell 的环境隔离，不能证明 CLI 已加载、Desktop 路由、
+凭据选择、出口或账号获准使用。CC Switch 后续切换仍会重写用户设置，下次启动前重新预检。
+此处没有后台监控或跨进程锁，不提供对其他写入器的永久阻断。
+`CLAUDE_CONFIG_DIR` 会改变 user settings、会话和凭据的目录，见官方
+[环境变量说明](https://code.claude.com/docs/en/env-vars)；清除仅作用于新进程，managed settings 仍可能重新指定它。
 
 历史注记：2026-10-16 前本工具曾以机器侧副本（`~/.claude/scripts/Set-ClaudeLane.ps1`、
 `~/.claude/settings.official-anthropic.json` 与桌面快捷方式）运行；现已收编入仓并退役
@@ -173,6 +200,11 @@ machine-journal 同日补记）：删除 claude-desktop 分组 3 个中继 provi
 model 钉定。日后经 CC Switch 重建任何 claude 分组条目前，先核对条目与模板不含
 `ANTHROPIC_BASE_URL` 等中继 env，也不含上述锁定键；装 Claude Desktop 前同样检查其
 claude-desktop 分组与模板现状，不要凭旧结论假设仍为已清空状态。
+
+修复第二条写入通道时，须同时核对数据库 provider、`common_config_claude` 和
+CC Switch 用户设置中的当前 provider 指针；不能仅修改 Claude 的 settings 文件。
+公共模板属于多个 provider 的共同输入，清理前先确认其他用途是否依赖这些键。
+并发操作已经改动数据库时，按最新现场重新核对，不能使用先前预览的哈希或自行恢复已删除条目。
 
 ## 5. 社区反馈如何采用
 

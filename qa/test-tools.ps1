@@ -312,6 +312,57 @@ try {
     Write-Settings $relayText
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
   }
+  Case 'official status reports inherited overrides without claiming a route' {
+    $r = Run (Join-Path $repo 'Set-ClaudeLane.ps1') @('-SettingsPath',$settings,'-VariantPath',$variant,'-JournalPath',$journal) @{
+      ANTHROPIC_BASE_URL='https://private-value-fixture.invalid'; CLAUDE_CODE_USE_BEDROCK='1'
+    }
+    Assert ($r.Code -eq 0) $r.Text
+    $state = $r.Text | ConvertFrom-Json
+    Assert ($state.process_overrides_present -contains 'ANTHROPIC_BASE_URL' -and $state.process_overrides_present -contains 'CLAUDE_CODE_USE_BEDROCK') 'Inherited overrides missing from status'
+    Assert ($state.route_verified -eq $false -and -not $r.Text.Contains('private-value-fixture')) 'Status leaked a value or claimed a route'
+  }
+  Case 'official child removes route credentials and keeps proxy and CA configuration' {
+    $cleanText = '{"permissions":{"defaultMode":"default"}}'
+    [IO.File]::WriteAllText($variant,$cleanText,[Text.UTF8Encoding]::new($false))
+    Write-Settings $cleanText
+    $before = Hash $settings; $journalBefore = Hash $journal
+    $r = Run (Join-Path $repo 'Set-ClaudeLane.ps1') @('-OfficialPreflight','-SettingsPath',$settings,'-VariantPath',$variant,'-JournalPath',$journal) @{
+      ANTHROPIC_BASE_URL='https://private-value-fixture.invalid'; ANTHROPIC_AUTH_TOKEN='private-token-fixture';
+      CLAUDE_CONFIG_DIR='private-config-fixture'; CLAUDE_CODE_USE_BEDROCK='1'; NODE_TLS_REJECT_UNAUTHORIZED='0'; HTTP_PROXY='http://proxy-fixture.invalid';
+      NODE_EXTRA_CA_CERTS='fixture-ca-only'
+    }
+    Assert ($r.Code -eq 0) $r.Text
+    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED')) {
+      Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=False ')) "Override survived: $name"
+    }
+    foreach ($name in @('HTTP_PROXY','NODE_EXTRA_CA_CERTS')) {
+      Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=True ')) "Network configuration removed: $name"
+    }
+    Assert (-not $r.Text.Contains('private-token-fixture') -and -not $r.Text.Contains('private-value-fixture')) 'Child preflight leaked values'
+    Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Child preflight wrote data'
+    Write-Settings $relayText
+    [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
+  }
+  Case 'official child refuses mismatched settings and credential-bearing variants' {
+    foreach ($text in @('{"apiKeyHelper":"fixture-helper"}','{"env":{"ANTHROPIC_BASE_URL":"https://private-value-fixture.invalid"}}','{"env":{"CLAUDE_CONFIG_DIR":"private-config-fixture"}}','{"env":[]}','{"env":"private-value-fixture"}')) {
+      [IO.File]::WriteAllText($variant,$text,[Text.UTF8Encoding]::new($false)); Write-Settings $text
+      foreach ($action in @('-OfficialPreflight','-LaunchOfficial')) {
+        $r = Lane @($action)
+        Assert ($r.Code -ne 0 -and $r.Text.Contains('no process started') -and -not $r.Text.Contains('private-value-fixture')) $r.Text
+      }
+    }
+    $cleanText = '{"permissions":{"defaultMode":"default"}}'
+    [IO.File]::WriteAllText($variant,$cleanText,[Text.UTF8Encoding]::new($false)); Write-Settings $cleanText
+    $r = Lane @('-LaunchOfficial')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('default user settings path only') -and -not $r.Text.Contains('OFFICIAL_PROCESS=started')) $r.Text
+    Write-Settings $relayText
+    [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
+    $before = Hash $settings
+    foreach ($options in @(@('-OfficialPreflight'),@('-OfficialPreflight','-Apply'),@('-LaunchOfficial','-ToOfficial'))) {
+      $r = Lane $options
+      Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before) 'Unsafe official process action accepted'
+    }
+  }
   Case 'lane preview leaves bytes and journal untouched' {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
     $before = Hash $settings; $journalBefore = Hash $journal

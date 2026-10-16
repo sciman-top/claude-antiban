@@ -3,6 +3,8 @@
 param(
   [switch]$Apply,
   [switch]$ToOfficial,
+  [switch]$OfficialPreflight,
+  [switch]$LaunchOfficial,
   [string]$SettingsPath = (Join-Path $env:USERPROFILE '.claude/settings.json'),
   [string]$VariantPath = (Join-Path $PSScriptRoot 'settings.official-anthropic.json'),
   [string]$JournalPath = (Join-Path $PSScriptRoot 'machine-journal.md'),
@@ -10,7 +12,17 @@ param(
   [string]$ExpectedCurrentHash = ''
 )
 $ErrorActionPreference = 'Stop'
+if (@(@($ToOfficial,$OfficialPreflight,$LaunchOfficial,[bool]$RollbackBackup) | Where-Object { $_ }).Count -gt 1) {
+  throw 'Choose one action: ToOfficial, OfficialPreflight, LaunchOfficial, or RollbackBackup.'
+}
+if (($OfficialPreflight -or $LaunchOfficial) -and ($Apply -or $ExpectedCurrentHash)) {
+  throw 'Official process actions cannot be combined with file-write or rollback options.'
+}
 $legacyOfficialTemplateHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
+
+function Test-OfficialOverride([string]$Name) {
+  return $Name -imatch '^ANTHROPIC_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
+}
 
 function Get-Hash([byte[]]$Bytes) {
   [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
@@ -72,6 +84,59 @@ function Assert-EntryTarget([string]$Path, [string]$What) {
   if ((Get-Item -LiteralPath $Path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing a $What symlink." }
 }
 
+if ($OfficialPreflight -or $LaunchOfficial) {
+  if (Get-Process -Name 'cc-switch' -ErrorAction SilentlyContinue) { throw 'cc-switch is running; close it before preparing an official process.' }
+  Assert-EntryTarget ([IO.Path]::GetFullPath($SettingsPath)) 'Settings'
+  Assert-EntryTarget ([IO.Path]::GetFullPath($VariantPath)) 'Variant'
+  $bytes = [IO.File]::ReadAllBytes([IO.Path]::GetFullPath($SettingsPath))
+  $projected = Get-ProjectedVariantBytes $VariantPath
+  if ((Get-Hash $bytes) -ne (Get-Hash $projected)) { throw 'Settings must match the official variant; preview ToOfficial first.' }
+  $officialJson = Read-Json $bytes
+  if ($null -ne $officialJson['env'] -and $officialJson['env'] -isnot [Collections.IDictionary]) {
+    throw 'Official variant env must be a JSON object; no process started.'
+  }
+  if ($officialJson['apiKeyHelper'] -or @($officialJson['env'].Keys | Where-Object { Test-OfficialOverride ([string]$_) }).Count) {
+    throw 'Official variant contains a credential helper or routing override; no process started.'
+  }
+  $info = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
+  $info.UseShellExecute = $false
+  $info.WorkingDirectory = $env:USERPROFILE
+  $removed = @($info.Environment.Keys | Where-Object { Test-OfficialOverride ([string]$_) })
+  foreach ($name in $removed) { $null = $info.Environment.Remove($name) }
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.ArgumentList.Add('-NoProfile')
+  if ($LaunchOfficial) {
+    if ([IO.Path]::GetFullPath($SettingsPath) -ine [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.claude/settings.json'))) {
+      throw 'LaunchOfficial uses the default user settings path only.'
+    }
+    # A bounded bootstrap opens a separate interactive console; returning a child
+    # on the caller's console would let two shells compete for the same input.
+    $interactiveCode = 'Write-Host "Check actual region eligibility before signing in. Proxy route remains unverified."; claude --setting-sources user'
+    $encodedInteractive = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($interactiveCode))
+    $bootstrap = 'Start-Process -FilePath (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList @(''-NoProfile'',''-NoExit'',''-EncodedCommand'',''' + $encodedInteractive + ''') -WorkingDirectory $env:USERPROFILE -WindowStyle Normal -ErrorAction Stop | Out-Null'
+    $info.ArgumentList.Add('-EncodedCommand')
+    $info.ArgumentList.Add([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap)))
+  } else {
+    foreach ($arg in @('-File',(Join-Path $PSScriptRoot 'prep-registration.ps1'),'-SettingsPath',[IO.Path]::GetFullPath($SettingsPath))) { $info.ArgumentList.Add($arg) }
+  }
+  $proc = [Diagnostics.Process]::new()
+  $proc.StartInfo = $info
+  try {
+    $null = $proc.Start()
+    $stdout = $proc.StandardOutput.ReadToEndAsync()
+    $stderr = $proc.StandardError.ReadToEndAsync()
+    if (-not $proc.WaitForExit(15000)) { $proc.Kill($true); throw 'Official preflight timed out.' }
+    if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout,$stderr),3000)) { throw 'Official preflight output timed out.' }
+    Write-Output ('OFFICIAL_CHILD_REMOVED_NAMES=' + ($removed -join ','))
+    if ($stdout.Result) { Write-Output $stdout.Result.TrimEnd() }
+    if ($stderr.Result) { [Console]::Error.WriteLine($stderr.Result.TrimEnd()) }
+    if ($LaunchOfficial -and $proc.ExitCode -eq 0) { Write-Output 'OFFICIAL_PROCESS=started; user settings only; eligibility, managed settings and actual route remain unverified.' }
+    exit $proc.ExitCode
+  } finally { $proc.Dispose() }
+}
+
 # Default invocation is a read-only status report.
 if (-not $ToOfficial -and -not $RollbackBackup) {
   $lane = 'missing'
@@ -96,7 +161,9 @@ if (-not $ToOfficial -and -not $RollbackBackup) {
     current_lane      = $lane
     variant_ready     = $variantReady
     cc_switch_running = [bool](Get-Process -Name 'cc-switch' -ErrorAction SilentlyContinue)
-  } | ConvertTo-Json -Compress
+    process_overrides_present = @([Environment]::GetEnvironmentVariables('Process').Keys | Where-Object { Test-OfficialOverride ([string]$_) } | Sort-Object)
+    route_verified = $false
+  } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii
   exit 0
 }
 

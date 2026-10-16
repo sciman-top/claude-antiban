@@ -11,7 +11,7 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 | `hooks/check-exit-ip.ps1` | 手动出口诊断 | 须显式给出预期出口与代理 |
 | `start-claude-chrome.cmd` | 普通独立 profile 启动专用浏览器 | 继承正常网络配置 |
 | `install.ps1` | 用户配置修复 | 默认预览，`-Apply` 才写机器 |
-| `Set-ClaudeLane.ps1` | Claude 配置 lane 切换 | 默认只读 status |
+| `Set-ClaudeLane.ps1` | lane 切换、隔离的官方进程预检与显式启动 | 默认只读 status |
 
 ## 文档
 
@@ -22,6 +22,7 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 ## 边界
 
 - 本仓工具默认不联网、不改配置；机器写入有原字节备份、前后 SHA256 与读回验证，可精确回滚。
+- `-OfficialPreflight` 只在隔离子进程中检查；`-LaunchOfficial` 才显式打开 Claude Code。两者保留代理与可信 CA 配置，不证明实际路由或使用资格。
 - `chrome-data/`、`qa/throwaway/`、凭据、浏览器会话与实际代理配置不入库、不上传。
 - 仓库内容已脱敏（2026-10-16）：不含出口 IP、代理供应商、端点域名与部署拓扑；
   早期完整历史在核对末态一致后已删除，公开远端只保留脱敏后的单根历史。
