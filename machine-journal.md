@@ -60,3 +60,12 @@ exit=0（期望 0）
 - 依据: 公开远端 origin/main 已含全部 16 个跟踪文件；旧末态与公开树的内容差异只有 LICENSE、本文件措辞与脱敏检查脚本，无独有内容；本机 .git 已不含旧对象
 - 验证: git rev-list origin/main = 4；旧 tip 对象在本机 git cat-file 已不可取；已推送历史对出口 IP、主机名、用户路径与端口的扫描 0 命中
 - 回滚: 不可逆；公开远端只保留脱敏后的单根历史，旧提交序列不再保留副本
+
+## 2026-10-16T09:07:28+08:00 | <HOST-f7563cc1>
+- 动作: 公开远端可达历史二次脱敏——`settings.official-anthropic.json` 在旧提交 9dff6e7 / 6c1e04c / 3d50ded / 9baf94d 中仍含本机用户名绝对路径（RUNBOOK 第 7 节与 qa 脱敏回归检查均判定为 user-path 泄漏）；已把该文件的历史版本统一替换为本仓当前的 `%USERPROFILE%` 占位版并 force-push
+- 依据: AGENTS.md §A「新增条目不得引入出口 IP、代理供应商、端点域名、部署拓扑、真实主机名或用户路径」；改写前后 tip 树一致，差异仅为路径占位
+- 验证: 改写前后 tip tree 同为 3dfa2a01a8e62d599a200f97e70b1f64800e41a9；全量对象扫描（23 blob）对用户路径 0 命中；fresh clone 复核 0 命中；远端 main 由 089d9708 前移到 2bd5f7a5（force-with-lease 期望值 089d9708）；本机执行 `reflog expire --expire=now --all` 与 `gc --prune=now` 后旧对象已不可取
+- 修正: 2026-10-16T08:46:10 记录里的「用户路径 0 命中」只覆盖了当时 tip 树，未覆盖可达历史；本次脱敏后该结论对全部可达历史成立
+- 残留: GitHub 服务端未引用对象在其 GC 前仍可按已知 SHA 取回（已实测 089d9708 与旧 blob 均可 fetch）；删除重建仓库是唯一可保证清除的路径
+- 回滚: 无独立副本；若需恢复旧历史，只能在 GitHub 端尚未 GC 时按 SHA 取回
+- 执行来源: 当前 claude-antiban 会话主代理（用户授权“按推荐连续执行修复”）
