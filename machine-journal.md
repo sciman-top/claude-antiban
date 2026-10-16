@@ -69,3 +69,11 @@ exit=0（期望 0）
 - 残留: GitHub 服务端未引用对象在其 GC 前仍可按已知 SHA 取回（已实测 089d9708 与旧 blob 均可 fetch）；删除重建仓库是唯一可保证清除的路径
 - 回滚: 无独立副本；若需恢复旧历史，只能在 GitHub 端尚未 GC 时按 SHA 取回
 - 执行来源: 当前 claude-antiban 会话主代理（用户授权“按推荐连续执行修复”）
+
+## 2026-10-16T09:16:30.6466319+08:00 | <HOST-99e0671a>
+- phase: prepared
+- actions: switch-lane-to-official
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-lane-52df5a17ff934cea8e062599858afb2d
+- before_sha256: bdcf9b00a2d66066ee0ac94a86f8aba7514a3724424e45eb4ccf714f8b125899
+- after_sha256: 8853ec5323d956f23a60d8bf685d90fd41c131fef374f4872eeb53c44b0c2028
+- phase: applied-readback-verified

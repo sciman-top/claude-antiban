@@ -23,6 +23,16 @@ function Get-HostTag {
   $digest = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($name.Trim().ToLowerInvariant()))
   return '<HOST-' + [Convert]::ToHexString($digest[0..3]).ToLowerInvariant() + '>'
 }
+function Get-JournalBackupPath([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $Path }
+  $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
+  $fullPath = [IO.Path]::GetFullPath($Path)
+  $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
+  if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
+  }
+  return $fullPath
+}
 function Read-Settings([byte[]]$Bytes) {
   try {
     $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
@@ -112,6 +122,7 @@ if ($journal -ieq $settings -or -not (Test-Path -LiteralPath ([IO.Path]::GetDire
 if ((Test-Path -LiteralPath $journal) -and ((Get-Item -LiteralPath $journal).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing a journal symlink.' }
 $stamp = [guid]::NewGuid().ToString('N')
 $backup = "$settings.bak-claude-env-$stamp"
+$journalBackup = Get-JournalBackupPath $backup
 $stage = "$settings.tmp-claude-env-$stamp"
 $published = $false
 try {
@@ -119,7 +130,7 @@ try {
   $null = Read-Settings ([IO.File]::ReadAllBytes($stage))
   if ((Get-Hash ([IO.File]::ReadAllBytes($settings))) -ne $beforeHash) { throw 'Settings changed during planning; no replacement performed.' }
   $entry = @('', "## $(Get-Date -Format o) | $(Get-HostTag)", '- phase: prepared',
-    "- actions: $($actions -join ',')", "- backup: $backup",
+    "- actions: $($actions -join ',')", "- backup: $journalBackup",
     "- before_sha256: $beforeHash", "- after_sha256: $afterHash") -join [Environment]::NewLine
   Add-Content -LiteralPath $journal -Encoding utf8 -Value $entry
   # Atomic publication creates a backup of the actual replaced file.

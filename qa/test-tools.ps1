@@ -15,6 +15,7 @@ function Run([string]$Script, [string[]]$ScriptArgs = @()) {
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
   $null = $info.Environment.Remove('COMPUTERNAME')
+  $info.Environment['USERPROFILE'] = $root
   foreach ($arg in (@('-NoProfile','-File',$Script) + $ScriptArgs)) { $info.ArgumentList.Add($arg) }
   $proc = [Diagnostics.Process]::new()
   $proc.StartInfo = $info
@@ -91,8 +92,12 @@ try {
     Assert ($r.Code -eq 0) $r.Text
     $script:backup = @(Get-ChildItem $root -Filter '*.bak-*')[0].FullName
     Assert ((Hash $backup) -eq $originalHash) 'Backup differs from raw original'
-    Assert ((Get-Content -Raw -LiteralPath $journal) -notmatch '(?m)^## .*\|\s*$') 'Missing machine name when environment variable is absent'
-    Assert ((Get-Content -Raw -LiteralPath $journal) -match '(?m)^## .*\| <HOST-[0-9a-f]{8}>\s*$') 'Journal header must carry a host pseudonym, not a raw hostname'
+    $journalText = Get-Content -Raw -LiteralPath $journal
+    Assert ($journalText -notmatch '(?m)^## .*\|\s*$') 'Missing machine name when environment variable is absent'
+    Assert ($journalText -match '(?m)^## .*\| <HOST-[0-9a-f]{8}>\s*$') 'Journal header must carry a host pseudonym, not a raw hostname'
+    $journalBackup = [regex]::Match($journalText, '(?m)^- backup: (?<path>.+?)\r?$').Groups['path'].Value
+    Assert ($journalBackup.StartsWith('%USERPROFILE%') -and $journalBackup -match '\.bak-claude-env-[a-f0-9]{32}$') 'Journal backup path must use %USERPROFILE%'
+    Assert (-not $journalText.Contains($root)) 'Journal leaked the fixture user profile'
     $actual = Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable
     $expected = $fixture | ConvertFrom-Json -AsHashtable
     $expected.hooks.SessionStart = @(@{matcher='startup';hooks=@($other)}, @{hooks=@($unknown)})
@@ -201,7 +206,12 @@ try {
     Assert ((Hash $settings) -eq $variantHash) 'Settings differ from variant bytes'
     $script:laneBackup = @(Get-ChildItem $root -Filter '*.bak-claude-lane-*')[0].FullName
     Assert ((Hash $script:laneBackup) -eq $script:relayBeforeHash) 'Lane backup differs from raw original'
-    Assert ((Get-Content -Raw -LiteralPath $journal).Contains('applied-readback-verified')) 'Journal missing verified phase'
+    $journalText = Get-Content -Raw -LiteralPath $journal
+    Assert ($journalText.Contains('applied-readback-verified')) 'Journal missing verified phase'
+    $backupMatches = [regex]::Matches($journalText, '(?m)^- backup: (?<path>.+?)\r?$')
+    $journalBackup = $backupMatches[$backupMatches.Count - 1].Groups['path'].Value
+    Assert ($journalBackup.StartsWith('%USERPROFILE%') -and $journalBackup -match '\.bak-claude-lane-[a-f0-9]{32}$') 'Lane journal backup path must use %USERPROFILE%'
+    Assert (-not $journalText.Contains($root)) 'Lane journal leaked the fixture user profile'
     $journalHash = Hash $journal
     $r = Lane @('-ToOfficial','-Apply')
     Assert ($r.Code -eq 0 -and $r.Text.Contains('NO_CHANGE')) $r.Text
@@ -235,7 +245,7 @@ try {
     $r = Lane @('-ToOfficial','-Apply')
     Assert ($r.Code -eq 0) $r.Text
     $projected = Get-Content -Raw -LiteralPath $settings
-    $profile = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\','/')
+    $profile = [IO.Path]::GetFullPath($root).Replace('\','/')
     Assert ($projected.Contains("node $profile/.claude/plugin.js")) $projected
     Assert (-not $projected.Contains('%USERPROFILE%')) 'Placeholder was projected literally'
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
