@@ -207,7 +207,7 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
   即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
 - 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
-- 当前官方模板默认以 bypassPermissions 权限模式启动（2026-10-17 操作者裁决），不预先授权宽泛工具列表；Auto / bypass 禁用键已从基线移除，repair 会移除被第三方加回的禁用键。唯一 allow 例外：`mcp__terminal__run_in_terminal`（2026-10-18 操作者裁决）——Desktop Code 的终端命令经该 MCP 工具执行，其批准门不随 bypass 自动放行，不加 allow 则每条终端命令都弹确认。allow 键不在 repair 键清单内：repair 既不回写也不移除它，模板经整文件安装/切 lane 投影，直改机器后以 journal 留痕。它不内置代理端点、附加项目目录或本机状态栏脚本。
+- 当前官方模板默认以 bypassPermissions 权限模式启动（2026-10-17 操作者裁决），不预先授权宽泛工具列表；Auto / bypass 禁用键已从基线移除，repair 会移除被第三方加回的禁用键。allow 键现含唯一条目 `mcp__terminal__run_in_terminal`（2026-10-18）：Desktop Code 终端命令经该 MCP 工具执行，其批准门不随 bypass 放行；但实测 allow 规则并不能阻止逐条弹窗（该门不读 Claude Code allow 规则），终态修复在指令层——skills-manager 全局规则 9.89 要求终端命令优先内置 `Bash`/`PowerShell`（内置通道 bypass 下实测全自动），或改用 Auto 模式（terminal auto-mode 同意机制为官方设计路径）。allow 键不在 repair 键清单内：repair 既不回写也不移除它，直改机器以 journal 留痕；保留为前瞻配置。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
   模板分别为 Bash 与原生 PowerShell 工具按命令前缀声明危险命令 deny；2026-10-18 起不再封禁解释器前缀（`pwsh`/`powershell` 及 `.exe` 变体）——PowerShell 7-only 仓库工作流本身以 `pwsh` 起头，封禁解释器会使 bypass 自主基线下每条 shell 命令都升级为确认弹窗。
   这些规则不是 OS 级隔离：deny 前缀规则看不到嵌套 shell 内部（间接包装可绕过前缀匹配，由残余 deny 与审查层兜底），Read deny 也不覆盖任意 Python/Node 等子进程中的间接文件访问，不据此宣称凭据完全隔离。PowerShell 常用别名按客户端规则归一化。
