@@ -299,3 +299,13 @@ exit=0（期望 0）
 - phase: applied-readback-verified
 - executor: ZCode session; direct settings.json edit authorized by the operator
 - boundary: filesystem_projected; 需再次重启 Desktop 让运行中会话重读 settings; 若弹窗仍现, 下一杠杆=Desktop 终端工具自身配置
+
+## 2026-10-18T01:5x+08:00 | <ZCode-jsonfix>
+- phase: prepared
+- actions: settings.json 尾逗号修复（deny 数组末尾多余逗号致 Claude Code 严格解析拒载, 00:34 我的删规则写入引入, PowerShell ConvertFrom-Json 宽容未检出, 两次 headless 探针报 Invalid JSON 后 Node 复检定位）
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-514ca7c344d48a4fd9eb61eb696e7908
+- before_sha256: ee3e8d9a31434080e1fe1e2cf01ea8cff45d0a45ec31f4a125bb428bb2556300
+- after_sha256: ede01d025442325847f01512d3284612b6e56cd42fd09872683d09df2cc00b12
+- phase: applied-readback-verified
+- executor: ZCode session; node JSON.parse 严格复验通过 (bypass+deny29+allow[])
+- boundary: filesystem_projected; 00:34 后 spawn 的会话均未加载 settings（无 bypass 默认/无 deny）, 新会话起恢复
