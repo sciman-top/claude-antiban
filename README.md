@@ -22,7 +22,7 @@ Claude 使用资格说明、只读环境诊断与可选用户配置修复。**�
 这些动作命中 Anthropic Usage Policy 的 `Do Not Abuse Our Platform` 段落。资格判断与
 两个分支的具体动作见 [RUNBOOK.md](RUNBOOK.md) 第 1 节与第 8 节。
 
-## 五个入口
+## 七个入口
 
 | 入口 | 作用 | 默认行为 |
 | --- | --- | --- |

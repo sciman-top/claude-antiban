@@ -91,6 +91,43 @@ function Assert-EntryTarget([string]$Path, [string]$What) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$What file missing." }
   if ((Get-Item -LiteralPath $Path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing a $What symlink." }
 }
+function Get-PhysicalPath([string]$Path) {
+  $full = [IO.Path]::GetFullPath($Path)
+  $current = [IO.Path]::GetPathRoot($full)
+  foreach ($part in $full.Substring($current.Length).Split([char[]]@('\','/'), [StringSplitOptions]::RemoveEmptyEntries)) {
+    $item = Get-Item -LiteralPath (Join-Path $current $part) -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      $item = $item.ResolveLinkTarget($true)
+      if ($null -eq $item) { throw 'Cannot resolve relay source location; no replacement.' }
+    }
+    $current = $item.FullName
+  }
+  return $current
+}
+function Assert-ExternalRelaySource([string]$Path) {
+  $repo = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd([char[]]@('\','/'))
+  $source = [IO.Path]::GetFullPath($Path)
+  $physicalRepo = (Get-PhysicalPath $repo).TrimEnd([char[]]@('\','/'))
+  $physicalSource = Get-PhysicalPath $source
+  if ($source.StartsWith($repo + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+      $physicalSource.StartsWith($physicalRepo + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Relay source must be outside this repository, including directory-link targets; no replacement.'
+  }
+}
+function Assert-RelayCredential($Json) {
+  $map = $Json['env']
+  $tokenKeys = @($map.Keys | Where-Object { [string]$_ -ieq 'ANTHROPIC_AUTH_TOKEN' })
+  # Bearer auth takes precedence immediately. API-key-only configurations need an
+  # interactive approval and cannot provide this switcher's no-OAuth-fallback boundary.
+  if ($tokenKeys.Count -ne 1 -or $map[$tokenKeys[0]] -isnot [string] -or
+      [string]::IsNullOrWhiteSpace($map[$tokenKeys[0]])) {
+    throw 'Relay source requires an explicit independent ANTHROPIC_AUTH_TOKEN; API-key-only and subscription fallback are not supported.'
+  }
+  if (@($map.Keys | Where-Object { [string]$_ -imatch '^(ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)$' }).Count -or
+      $map[$tokenKeys[0]].Trim() -like 'sk-ant-oat*') {
+    throw 'Relay source must not mix API-key or subscription OAuth credentials with gateway bearer auth.'
+  }
+}
 
 if ($OfficialPreflight -or $LaunchOfficial) {
   if (Get-Process -Name 'cc-switch' -ErrorAction SilentlyContinue) { throw 'cc-switch is running; close it before preparing an official process.' }
@@ -212,11 +249,13 @@ if ($RollbackBackup) {
     # The relay source lives outside the repository: this tool never stores a
     # gateway credential, and it never prints or journals a value from the file.
     Assert-EntryTarget ([IO.Path]::GetFullPath($RelayVariant)) 'Relay variant'
+    Assert-ExternalRelaySource $RelayVariant
     # Projection keeps the caller's file portable and validates it as JSON.
     $afterBytes = Get-ProjectedVariantBytes $RelayVariant
     $afterHash = Get-Hash $afterBytes
     $relayJson = Read-Json $afterBytes
     if (-not (Test-RelayLane $relayJson)) { throw 'Relay variant must declare env.ANTHROPIC_BASE_URL; no replacement.' }
+    Assert-RelayCredential $relayJson
     if ($relayJson['apiKeyHelper']) { throw 'Relay variant contains a credential helper; no replacement.' }
     if (Test-KeyPresent $relayJson 'hooks') { throw 'Relay variant declares hooks; this repository does not register automatic hooks.' }
     if ($afterHash -eq $beforeHash) { Write-Output 'NO_CHANGE (settings already match the relay variant)'; exit 0 }

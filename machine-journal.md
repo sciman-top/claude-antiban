@@ -250,3 +250,11 @@ exit=0（期望 0）
 - verification: protected snapshot readback matched the before hash; post-run readback matched the recorded target hash; raw values omitted; User-scope values were outside the action scope
 - rollback: restore only from this DPAPI backup if the target properties remain absent; preserve any later values
 - boundary: filesystem_projected; no client restart, OAuth login, token refresh, model request, or route probe
+
+## 2026-10-17T18:47:50.6204527+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: repair-permissions-defaultMode,repair-permissions-disableAutoMode,repair-permissions-disableBypassPermissionsMode
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-7a79b715f89f45b69cfe7db5448b0537
+- before_sha256: a6091c378cb430aecebe4e01b3083823988f6270fc82f1953e5cedf2fe92e288
+- after_sha256: d90a5b812e58eed2a4a5b265aa37fa3c5d40d2b791a75ab3d23262c5920378ca
+- phase: applied-readback-verified

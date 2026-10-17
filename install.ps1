@@ -4,6 +4,7 @@ param(
   [switch]$Apply,
   [switch]$RemoveLegacyHook,
   [switch]$ConfigureProxy,
+  [switch]$RepairPermissions,
   [string]$Proxy = '',
   [string]$SettingsPath = (Join-Path $env:USERPROFILE '.claude/settings.json'),
   [string]$JournalPath = (Join-Path $PSScriptRoot 'machine-journal.md'),
@@ -70,7 +71,7 @@ $json = Read-Settings $beforeBytes
 $actions = [Collections.Generic.List[string]]::new()
 
 if ($RollbackBackup) {
-  if ($RemoveLegacyHook -or $ConfigureProxy -or $Proxy) { throw 'Rollback cannot be combined with configuration changes.' }
+  if ($RemoveLegacyHook -or $ConfigureProxy -or $RepairPermissions -or $Proxy) { throw 'Rollback cannot be combined with configuration changes.' }
   if ($ExpectedCurrentHash -notmatch '^[a-fA-F0-9]{64}$' -or $beforeHash -ine $ExpectedCurrentHash) { throw 'Rollback refused: current hash differs or is missing; preserve newer changes.' }
   $backupPath = [IO.Path]::GetFullPath($RollbackBackup)
   if ([IO.Path]::GetDirectoryName($backupPath) -ine [IO.Path]::GetDirectoryName($settings) -or
@@ -84,6 +85,41 @@ if ($RollbackBackup) {
 } else {
   if ($ExpectedCurrentHash) { throw 'ExpectedCurrentHash requires RollbackBackup.' }
   if ($Proxy -and -not $ConfigureProxy) { throw 'Proxy requires ConfigureProxy; configuration is never implicit.' }
+  if ($RepairPermissions) {
+    if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw '%USERPROFILE% is not set; cannot project permission paths.' }
+    $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
+    $templateText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'settings.official-anthropic.json')).Replace('%USERPROFILE%', $profilePath)
+    $template = Read-Settings ([Text.UTF8Encoding]::new($false).GetBytes($templateText))
+    $policy = $template['permissions']
+    if ($policy -isnot [Collections.IDictionary] -or $policy['defaultMode'] -cne 'default' -or
+        $policy['disableAutoMode'] -cne 'disable' -or $policy['disableBypassPermissionsMode'] -cne 'disable') {
+      throw 'Permission template does not define the expected approval boundary; no changes made.'
+    }
+    if (-not $json.Contains('permissions')) { $json['permissions'] = @{} }
+    $permissions = $json['permissions']
+    if ($permissions -isnot [Collections.IDictionary]) { throw 'permissions must be an object.' }
+    foreach ($key in @('defaultMode','disableAutoMode','disableBypassPermissionsMode')) {
+      if ($permissions[$key] -cne $policy[$key]) {
+        $permissions[$key] = $policy[$key]
+        $actions.Add("repair-permissions-$key")
+      }
+    }
+    if ($policy['deny'] -isnot [array] -or ($permissions.Contains('deny') -and $permissions['deny'] -isnot [array])) {
+      throw 'Permission deny lists must be arrays; no changes made.'
+    }
+    $deny = [Collections.Generic.List[string]]::new()
+    $existingDeny = @()
+    if ($permissions.Contains('deny')) { $existingDeny = @($permissions['deny']) }
+    foreach ($rule in @($existingDeny) + @($policy['deny'])) {
+      if ($rule -isnot [string] -or [string]::IsNullOrWhiteSpace($rule)) { throw 'Permission deny rules must be nonempty strings; no changes made.' }
+      if (-not $deny.Contains($rule)) { $deny.Add($rule) }
+    }
+    # Existing custom rules and all unrelated settings survive this targeted repair.
+    if ((ConvertTo-Json -InputObject $permissions['deny'] -Compress) -cne (ConvertTo-Json -InputObject $deny.ToArray() -Compress)) {
+      $permissions['deny'] = $deny.ToArray()
+      $actions.Add('repair-permissions-deny-union')
+    }
+  }
   if ($ConfigureProxy) {
     $uri = $null
     if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https') -or $uri.UserInfo) { throw 'Supply an HTTP/HTTPS proxy without embedded credentials.' }

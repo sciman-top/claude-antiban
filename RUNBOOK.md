@@ -1,6 +1,6 @@
 # Claude 使用资格、环境诊断与配置修复
 
-**修订：2026-10-16。** 本仓历史名称为 claude-antiban；工具用于减少配置错误，没有防封保证。
+**修订：2026-10-17。** 本仓历史名称为 claude-antiban；工具用于减少配置错误，没有防封保证。
 旧文档中的“固定机房 IP 最优”“改美国时区”“无泄漏”“订阅 OAuth 接入 CPA”等结论已撤回。
 历史机器日志只记录当时操作，不再作为安全或当前部署状态证明。
 
@@ -13,6 +13,8 @@
 - 按**实际所在地**与主体的注册地、总部及控制关系判断资格，不能用代理的所在地替换。
   中国大陆不在本次核对的支持名单；实际仍在中国大陆的个人，不应据此工具开始注册或登录。
   若官方政策或实际情况改变，重新核对；授权云渠道也有自己的准入条件，并不自动消除地区限制。
+- 2026-10-17 读取地区政策页时，页面标注生效日为 2026-11-12；未来生效文本不能整体当作
+  当日已生效条款。资格决定须核对适用版本，不能用本仓历史核对日期或代理出口代替确认。
 - 使用真实、准确且本人有权使用的账号和付款信息，按当前官方验证流程办理。
   不购买来历不明账号、借用身份、用接码或换号规避限制；不共享订阅凭据。
 - 误判、停用或拒绝访问时保存脱敏错误、时间和请求 ID，通过
@@ -61,9 +63,11 @@ CLI 支持 HTTP/HTTPS 代理，不支持 SOCKS 代理。不要把 SOCKS 端口�
 中转 Claude.ai 订阅凭据；本部署不采纳 CPA 代持 Free/Pro/Max OAuth 给其他客户端的路径。
 
 [Subscriptions and gateways](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways)
-同时说明：仅设置 ANTHROPIC_BASE_URL 不会替换已保存的官方 Code 订阅认证；
+同时说明：仅设置 ANTHROPIC_BASE_URL 不会替换已保存的官方 Code 订阅认证，
+请求仍经过网关，已保存的订阅登录可能作为有效凭据经该路径发送；
 网关凭据或 apiKeyHelper 生效后则改用该凭据，订阅额度不适用。
 不能仅因 BASE_URL 非空就断言凭据共享，也不能据此认为 CPA 代持令牌被认可。
+本仓 ToRelay 因此要求独立的网关 bearer 认证，不接受仅设置 BASE_URL 的配置。
 
 ## 3. 本仓工具：默认不联网、不改配置
 
@@ -96,6 +100,10 @@ pwsh -NoProfile -File .\Get-SurfaceReport.ps1 -CheckUdpLeak
 
 输出只报状态与来源，不打印系统代理取值，也不写 `machine-journal.md`；
 解读口径见第 5 节。它不是评分工具，也不改变第 1 节的资格判断。
+`SYSTEM_PROXY=disabled` 仅表示静态代理未启用；PAC 存在性及可读取的 AutoDetect 单独报告，
+`EFFECTIVE_PROXY=unverified` 不把注册表、扩展、策略或 TUN 配置当成进程实际路由。
+UDP 诊断只接受事务 ID、响应头、长度和属性边界均匹配的 IPv4 STUN Binding Success；
+无响应、无映射、无效响应及不支持的地址族均不算无泄漏或账号安全。
 
 `start-claude-chrome.cmd` 只启动官方 Chrome 的独立 `chrome-data/`；
 继承浏览器正常网络配置，不强设代理、语言、时区或 WebRTC。
@@ -123,6 +131,10 @@ RFC 8828 第 5.2 节模式 4“强制走代理”），使 WebRTC 媒体不能�
 pwsh -NoProfile -File .\install.ps1 -RemoveLegacyHook
 pwsh -NoProfile -File .\install.ps1 -RemoveLegacyHook -Apply
 
+# 权限漂移时仅修复确认模式及模板 deny 边界；保留其他自定义配置
+pwsh -NoProfile -File .\install.ps1 -RepairPermissions
+# 确认预览后，同命令加 -Apply
+
 # 可选：操作者明确选择代理时，补齐两个缺失 env 键；不改遥测
 pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:10808
 # 确认预览后，同命令加 -Apply
@@ -130,6 +142,10 @@ pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:1080
 
 已有代理值不同或同名键出现多种大小写时拒绝写入；相同值保留原键名。
 其他 env、permissions、hook action/group/event 全部保留；空的本仓 hook 容器才移除。
+显式 `-RepairPermissions` 例外：只把 defaultMode 恢复为 default、禁用 Auto/bypass，
+并把仓库模板 deny 与现有 deny 合并；不删除自定义规则、模型、hooks、env 或其他权限键。
+它复用同一备份、日志、并发检测与哈希回滚流程；默认预览，重复 Apply 为 NO_CHANGE。
+用户设置不是不可覆盖的组织策略，当前会话与 managed 设置的实际行为仍须独立验证。
 无修改则不写文件、不建备份、不写日志，也不联网。
 
 Apply 将候选 JSON 写入同目录临时文件，校验后原子替换；
@@ -170,8 +186,12 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - ToRelay 用 `-RelayVariant` 指向一份**仓外**自备的 relay 设置文件，把它投影成新的机器设置；工具只是切换器，
   既不生成、不保存、也不回显其中任何取值，journal 只记动作名与哈希。源文件同样支持 `%USERPROFILE%` 占位。
   源文件是**完整的机器设置**（整文件替换）：以当前官方模板为底、只追加一个 `env` 块；写成最小文件会丢掉权限模板、deny 列表与 Manual 设置。
-- ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含 `env.ANTHROPIC_BASE_URL`，
-  且不得含 `apiKeyHelper` 或 `hooks`；其他现状先 `-ToOfficial` 再切。文件放在仓库外本机目录，命名含 `token`/`credentials`
+- ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含 `env.ANTHROPIC_BASE_URL`
+  和非空字符串 `env.ANTHROPIC_AUTH_TOKEN`，且不得含 `apiKeyHelper`、`hooks`、`ANTHROPIC_API_KEY` 或
+  `CLAUDE_CODE_OAUTH_TOKEN`。已知订阅 OAuth 前缀也拒绝；工具不能证明任意 opaque token 的来源，
+  操作者须确认它是独立、获授权的网关凭据。API-key-only 需要客户端交互确认后才取代订阅认证，
+  此切换入口无法保证该确认已完成，因此拒绝该形式；不自动删除已保存登录来补齐条件。
+  源文件的普通路径及解析目录链接后的真实路径都必须在仓外；其他现状先 `-ToOfficial` 再切。文件命名含 `token`/`credentials`
   可落入模板 deny 列表的读取拦截范围。
 - 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
   即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
@@ -287,7 +307,8 @@ issue 关闭不证明修复；403、TLS 错误、ECONNRESET、429 也不直接�
 `start-claude-chrome-leakless.cmd` 只封堵浏览器一侧；PowerShell 等其它客户端仍会走非代理 UDP。
 解析器所在位置由代理客户端的 DNS 与路由模式决定，本仓不读取也不改写该配置；
 `claude.ai` 经出口返回 Cloudflare `403 / Cf-Mitigated: challenge` 而 `www.anthropic.com`
-返回 200，说明链路可达但受出口 IP 信誉影响，浏览器开关不能修复该现象，换出口也不保证命中。
+返回 200，说明当时链路可达且该请求触发 challenge，不能单凭此响应判定 IP 信誉或封号原因。
+浏览器 WebRTC 开关不处理 HTTP challenge，也不保证账号可用。
 
 `Get-SurfaceReport.ps1` 输出上表“事实来源”一列对应的本机事实：它不访问评分站点，
 不打印系统代理取值，也不改变任何设置。降低分数不是本仓目标。

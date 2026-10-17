@@ -1,7 +1,7 @@
 #Requires -Version 7.3
 # Read-only report of the local surface a third-party checker scores: host locale,
 # fonts, browser profile and where the browser proxy comes from. No machine writes;
-# no network unless -CheckExitIp is explicit (then it delegates to the manual hook).
+# Network requires -CheckExitIp or -CheckUdpLeak explicitly.
 param(
   [switch]$CheckExitIp,
   [string]$ExpectedIp = '',
@@ -31,13 +31,44 @@ function Get-MaskedAddress([string]$Address) {
 # A STUN binding request over non-proxied UDP (RFC 5389) shows the public address
 # this host would offer on a path that ignores the configured proxy. It measures
 # the host precondition, not the browser policy that decides whether WebRTC uses it.
+function ConvertFrom-StunResponse([byte[]]$Response, [byte[]]$TransactionId) {
+  $invalid = [pscustomobject]@{ Status='invalid-response'; Address='' }
+  if ($Response.Length -lt 20 -or $TransactionId.Length -ne 12 -or $Response[0] -ne 1 -or $Response[1] -ne 1) { return $invalid }
+  $bodyLength = ([int]$Response[2] -shl 8) -bor $Response[3]
+  if ($bodyLength % 4 -ne 0 -or $Response.Length -ne 20 + $bodyLength) { return $invalid }
+  $cookie = [byte[]]@(0x21, 0x12, 0xA4, 0x42)
+  for ($i = 0; $i -lt 4; $i++) { if ($Response[4 + $i] -ne $cookie[$i]) { return $invalid } }
+  for ($i = 0; $i -lt 12; $i++) { if ($Response[8 + $i] -ne $TransactionId[$i]) { return $invalid } }
+  $address = ''
+  $unsupported = $false
+  $offset = 20
+  while ($offset -lt $Response.Length) {
+    if ($offset + 4 -gt $Response.Length) { return $invalid }
+    $type = ([int]$Response[$offset] -shl 8) -bor $Response[$offset + 1]
+    $length = ([int]$Response[$offset + 2] -shl 8) -bor $Response[$offset + 3]
+    $next = $offset + 4 + $length + ((4 - ($length % 4)) % 4)
+    if ($next -gt $Response.Length) { return $invalid }
+    if ($type -eq 0x0020) {
+      if ($length -lt 4 -or $Response[$offset + 4] -ne 0) { return $invalid }
+      $family = $Response[$offset + 5]
+      if ($family -eq 1 -and $length -eq 8) {
+        $address = (@(0..3 | ForEach-Object { $Response[$offset + 8 + $_] -bxor $cookie[$_] })) -join '.'
+      } elseif ($family -eq 2 -and $length -eq 20) {
+        $unsupported = $true
+      } else { return $invalid }
+    }
+    $offset = $next
+  }
+  if ($address) { return [pscustomobject]@{ Status='valid'; Address=$address } }
+  return [pscustomobject]@{ Status=$(if ($unsupported) { 'unsupported-address-family' } else { 'no-mapped-address' }); Address='' }
+}
 function Get-StunMappedAddress([string]$Server, [int]$Port) {
   $cookie = [byte[]]@(0x21, 0x12, 0xA4, 0x42)
   $request = New-Object byte[] 20
   $request[1] = 1
   [Array]::Copy($cookie, 0, $request, 4, 4)
   $transactionId = New-Object byte[] 12
-  ([Random]::new()).NextBytes($transactionId)
+  [Security.Cryptography.RandomNumberGenerator]::Fill($transactionId)
   [Array]::Copy($transactionId, 0, $request, 8, 12)
   $client = [Net.Sockets.UdpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
   $client.Client.ReceiveTimeout = 4000
@@ -46,17 +77,8 @@ function Get-StunMappedAddress([string]$Server, [int]$Port) {
     [void]$client.Send($request, 20)
     $endpoint = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
     $response = $client.Receive([ref]$endpoint)
-  } catch { return '' } finally { $client.Dispose() }
-  $offset = 20
-  while ($offset + 4 -le $response.Length) {
-    $type = ($response[$offset] -shl 8) -bor $response[$offset + 1]
-    $length = ($response[$offset + 2] -shl 8) -bor $response[$offset + 3]
-    if ($type -eq 0x0020 -and $length -ge 8) {
-      return ((@(0..3 | ForEach-Object { $response[$offset + 8 + $_] -bxor $cookie[$_] })) -join '.')
-    }
-    $offset += 4 + $length + ((4 - ($length % 4)) % 4)
-  }
-  return ''
+  } catch { return [pscustomobject]@{ Status='no-response'; Address='' } } finally { $client.Dispose() }
+  return ConvertFrom-StunResponse $response $transactionId
 }
 
 $timeZone = Get-TimeZone
@@ -99,16 +121,30 @@ Write-Output ('BROWSER_PROXY_SOURCE=' + $(if ($allLauncherFlags -contains 'proxy
 # tracked documentation must not carry this machine's infrastructure details.
 $proxyState = 'unavailable'
 $proxyLoopback = 'unavailable'
+$pacState = 'unavailable'
+$autoDetect = 'unavailable'
 try {
   $internetSettings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+  $pacState = -not [string]::IsNullOrWhiteSpace([string]$internetSettings.AutoConfigURL)
+  # AutoDetect is not always exposed here; absence does not prove WPAD is off.
+  if ($null -ne $internetSettings.AutoDetect) { $autoDetect = [bool]$internetSettings.AutoDetect }
   if ($internetSettings.ProxyEnable -eq 1) {
     $proxyState = 'configured'
-    $proxyHost = ([string]$internetSettings.ProxyServer -split ';' | Select-Object -First 1) -replace '^.*=', ''
-    $proxyHost = ($proxyHost -split ':')[0]
-    $proxyLoopback = @('localhost', '::1') -contains $proxyHost.ToLowerInvariant() -or $proxyHost -like '127.*'
-  } else { $proxyState = 'direct'; $proxyLoopback = 'n/a' }
+    $proxyLoopback = $true
+    foreach ($entry in ([string]$internetSettings.ProxyServer -split ';')) {
+      $server = $entry.Trim() -replace '^\w+=', ''
+      if ($server -notmatch '^\w+://') { $server = 'http://' + $server }
+      $uri = $null
+      if (-not [uri]::TryCreate($server, [UriKind]::Absolute, [ref]$uri)) { $proxyLoopback = 'unavailable'; break }
+      $hostName = $uri.Host.Trim([char[]]@('[',']'))
+      $ip = $null
+      if ($hostName -ine 'localhost' -and (-not [Net.IPAddress]::TryParse($hostName, [ref]$ip) -or -not [Net.IPAddress]::IsLoopback($ip))) { $proxyLoopback = $false }
+    }
+  } else { $proxyState = 'disabled'; $proxyLoopback = 'n/a' }
 } catch { $proxyState = 'unavailable' }
 Write-Output ('SYSTEM_PROXY=' + $proxyState + ' loopback=' + $proxyLoopback)
+Write-Output ("SYSTEM_PROXY_AUTOCONFIG=pac_present=$pacState auto_detect=$autoDetect")
+Write-Output 'EFFECTIVE_PROXY=unverified; static settings, PAC, browser policy/extensions and TUN need separate runtime evidence.'
 
 # Presence only, per scope: an existing variable is not proof that a client uses it.
 $proxyVariables = @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY')
@@ -124,11 +160,13 @@ Write-Output 'SCORE_NOTE=third-party risk scores are not eligibility, safety or 
 
 if ($CheckUdpLeak) {
   if ($StunPort -lt 1 -or $StunPort -gt 65535) { [Console]::Error.WriteLine('Supply a UDP port between 1 and 65535.'); exit 3 }
-  $mappedAddress = Get-StunMappedAddress -Server $StunServer -Port $StunPort
-  if (-not $mappedAddress) {
+  $probe = Get-StunMappedAddress -Server $StunServer -Port $StunPort
+  if ($probe.Status -eq 'no-response') {
     Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=none; no non-proxied UDP answer observed")
+  } elseif ($probe.Status -ne 'valid') {
+    Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=unverified status=" + $probe.Status + '; no usable mapped address')
   } else {
-    Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=yes mapped=" + (Get-MaskedAddress $mappedAddress) + '; host path only, browser policy is reported above')
+    Write-Output ("UDP_PROBE=$StunServer`:$StunPort reply=yes mapped=" + (Get-MaskedAddress $probe.Address) + '; host path only, browser policy is reported above')
   }
 } else { Write-Output 'UDP_PROBE=not-requested' }
 

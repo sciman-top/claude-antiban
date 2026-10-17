@@ -93,6 +93,14 @@ $mock = Join-Path $root 'mock.ps1'
 param([string]$Script,[string]$Mode,[string]$SettingsPath,[string]$RepoRoot)
 $ErrorActionPreference='Stop'
 function global:Set-TimeZone { throw 'Unexpected timezone mutation' }
+function global:Get-ItemProperty {
+  param([string]$LiteralPath)
+  if ($LiteralPath -ne 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings') { throw 'Unexpected registry access' }
+  if ($Mode -eq 'surface-pac') { return [pscustomobject]@{ ProxyEnable=0; AutoConfigURL='https://pac-fixture.invalid/config'; AutoDetect=1 } }
+  if ($Mode -eq 'surface-ipv6') { return [pscustomobject]@{ ProxyEnable=1; ProxyServer='http=[::1]:10808;https=127.0.0.1:10808' } }
+  if ($Mode -eq 'surface-mixed') { return [pscustomobject]@{ ProxyEnable=1; ProxyServer='http=127.0.0.1:10808;https=proxy-fixture.invalid:8080' } }
+  return [pscustomobject]@{ ProxyEnable=0 }
+}
 function global:Invoke-WebRequest {
   param($Uri,$Proxy,$TimeoutSec,$MaximumRedirection)
   if($Mode -in @('default','restore','surface','surface-no-proxy')) { throw 'Unexpected network request' }
@@ -104,7 +112,7 @@ function global:Invoke-WebRequest {
 if($Mode -eq 'default') { & $Script -SettingsPath $SettingsPath }
 elseif($Mode -eq 'restore') { & $Script -Restore -SettingsPath $SettingsPath }
 elseif($Mode -eq 'retired') { & $Script }
-elseif($Mode -eq 'surface') { & $Script -RepoRoot $RepoRoot }
+elseif($Mode -in @('surface','surface-pac','surface-ipv6','surface-mixed')) { & $Script -RepoRoot $RepoRoot }
 elseif($Mode -eq 'surface-no-proxy') { & $Script -RepoRoot $RepoRoot -CheckExitIp }
 elseif($Mode -eq 'surface-exit') { & $Script -RepoRoot $RepoRoot -CheckExitIp -ExpectedIp '203.0.113.9' -Proxy 'http://127.0.0.1:1' }
 elseif($Mode -eq 'surface-leak') { & $Script -RepoRoot $RepoRoot -CheckUdpLeak -StunServer '127.0.0.1' -StunPort 1 }
@@ -329,7 +337,8 @@ try {
     Assert ($r.Text -match '(?m)^BROWSER_PROFILE=present languages=en-US,en\r?$') $r.Text
     Assert ($r.Text -match '(?m)^WEBRTC_POLICY_OVERRIDE=present\r?$') $r.Text
     Assert ($r.Text -match '(?m)^EAST_ASIAN_FONTS_PRESENT=(True|False|unavailable)\r?$') $r.Text
-    Assert ($r.Text -match '(?m)^SYSTEM_PROXY=(configured loopback=(True|False)|direct loopback=n/a|unavailable loopback=unavailable)\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^SYSTEM_PROXY=disabled loopback=n/a\r?$') $r.Text
+    Assert ($r.Text -match '(?m)^EFFECTIVE_PROXY=unverified;') $r.Text
     Assert ($r.Text -match '(?m)^PROXY_ENV_PRESENT=process=none user=(none|\S+) machine=(none|\S+)\r?$') $r.Text
     Assert ($r.Text -match '(?m)^NETWORK_CHECK=not-requested\r?$') $r.Text
     Assert (@(Get-ChildItem -LiteralPath $surfaceRoot -Recurse -Force | ForEach-Object { $_.FullName }).Count -eq $surfaceBefore.Count) 'Surface report added files'
@@ -347,6 +356,45 @@ try {
     Assert ($r.Code -eq 0 -and $r.Text.Contains('UDP_PROBE=127.0.0.1:1 reply=none')) $r.Text
     $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode','surface-leak-invalid','-RepoRoot',$surfaceRoot)
     Assert ($r.Code -eq 3) "Surface UDP probe accepted an invalid port: $($r.Code): $($r.Text)"
+  }
+  Case 'surface distinguishes PAC and all static proxy entries without claiming an effective route' {
+    $proxyRoot = Join-Path $root 'surface-proxy'
+    $null = New-Item -ItemType Directory -Path $proxyRoot
+    foreach ($mode in @('surface-pac','surface-ipv6','surface-mixed')) {
+      $r = Run $mock @('-Script',(Join-Path $repo 'Get-SurfaceReport.ps1'),'-Mode',$mode,'-RepoRoot',$proxyRoot)
+      Assert ($r.Code -eq 0 -and $r.Text.Contains('EFFECTIVE_PROXY=unverified')) $r.Text
+      Assert (-not $r.Text.Contains('pac-fixture.invalid') -and -not $r.Text.Contains('proxy-fixture.invalid')) 'Proxy source value leaked'
+      if ($mode -eq 'surface-pac') {
+        Assert ($r.Text.Contains('SYSTEM_PROXY=disabled loopback=n/a') -and $r.Text.Contains('pac_present=True auto_detect=True') -and -not $r.Text.Contains('SYSTEM_PROXY=direct')) $r.Text
+      } elseif ($mode -eq 'surface-ipv6') {
+        Assert ($r.Text.Contains('SYSTEM_PROXY=configured loopback=True')) $r.Text
+      } else { Assert ($r.Text.Contains('SYSTEM_PROXY=configured loopback=False')) $r.Text }
+    }
+  }
+  Case 'STUN validates transaction, complete attributes and IPv4 family before accepting an address' {
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'Get-SurfaceReport.ps1'), [ref]$null, [ref]$null)
+    $parser = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertFrom-StunResponse'}, $true)
+    . ([scriptblock]::Create($parser.Extent.Text))
+    $tx = [byte[]]@(0..11)
+    $valid = [Convert]::FromHexString('0101000c2112a442000102030405060708090a0b002000080001a147e112a643')
+    $result = ConvertFrom-StunResponse $valid $tx
+    Assert ($result.Status -eq 'valid' -and $result.Address -eq '192.0.2.1') 'Valid binding response rejected'
+    foreach ($index in @(0,1,2,3,4,8,23,24,25)) {
+      $bad = [byte[]]$valid.Clone(); $bad[$index] = $bad[$index] -bxor 1
+      $result = ConvertFrom-StunResponse $bad $tx
+      Assert ($result.Status -eq 'invalid-response' -and -not $result.Address) "Malformed response accepted at index $index"
+    }
+    foreach ($bad in @([byte[]]$valid[0..18], [byte[]]$valid[0..30], [byte[]]($valid + [byte[]]@(0,0,0,0)))) {
+      Assert ((ConvertFrom-StunResponse $bad $tx).Status -eq 'invalid-response') 'Incomplete or trailing datagram accepted'
+    }
+    $empty = [byte[]]$valid[0..19]; $empty[3] = 0
+    Assert ((ConvertFrom-StunResponse $empty $tx).Status -eq 'no-mapped-address') 'Missing address treated as success'
+    $ipv6 = [byte[]]::new(44); [Array]::Copy($valid, $ipv6, 28); $ipv6[3]=24; $ipv6[23]=20; $ipv6[25]=2
+    Assert ((ConvertFrom-StunResponse $ipv6 $tx).Status -eq 'unsupported-address-family') 'Unsupported IPv6 mapped address misread as IPv4'
+    $padded = [byte[]]($valid + [byte[]]@(0x80,0x22,0,1,0x41,0,0,0)); $padded[3]=20
+    Assert ((ConvertFrom-StunResponse $padded $tx).Status -eq 'valid') 'Padded unknown attribute rejected'
+    $padded[35]=8
+    Assert ((ConvertFrom-StunResponse $padded $tx).Status -eq 'invalid-response') 'Malformed attribute after a mapped address ignored'
   }
   Case 'lane status is read-only and classifies the relay form' {
     Write-Settings $relayText; $before = Hash $settings; $journalBefore = Hash $journal
@@ -573,10 +621,12 @@ try {
     Assert ($r.Code -ne 0 -and $r.Text.Contains('-RelayVariant')) $r.Text
     $r = Lane @('-RelayVariant',$relayVariant)
     Assert ($r.Code -ne 0 -and $r.Text.Contains('RelayVariant requires ToRelay')) $r.Text
-    foreach ($text in @('{"env":{"KEEP":"value-fixture"}}','{"env":[]}','{"env":"value-fixture"}','{"apiKeyHelper":"fixture-helper","env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic"}}','{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic"},"hooks":{"SessionStart":[]}}')) {
+    foreach ($text in @('{"env":{"KEEP":"value-fixture"}}','{"env":[]}','{"env":"value-fixture"}','{"apiKeyHelper":"fixture-helper","env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"}}','{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"},"hooks":{"SessionStart":[]}}')) {
       [IO.File]::WriteAllText($relayVariant, $text, [Text.UTF8Encoding]::new($false))
       $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
       Assert ($r.Code -ne 0 -and -not $r.Text.Contains('secret-fixture')) "Relay variant accepted: $text"
+      if ($text.Contains('apiKeyHelper')) { Assert ($r.Text.Contains('credential helper')) 'Helper refusal was masked by an earlier check' }
+      if ($text.Contains('SessionStart')) { Assert ($r.Text.Contains('declares hooks')) 'Hook refusal was masked by an earlier check' }
       Assert ((Hash $settings) -eq $before) "Relay variant replaced settings: $text"
     }
     [IO.File]::WriteAllText($relayVariant, $relaySource, [Text.UTF8Encoding]::new($false))
@@ -589,6 +639,89 @@ try {
     $r = Lane @('-ToRelay','-RelayVariant',(Join-Path $profileRoot 'absent-relay-variant.json'),'-Apply')
     Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before) 'Missing relay variant was accepted'
     Write-Settings $relayText
+  }
+  Case 'relay requires immediate gateway bearer auth and refuses subscription or ambiguous credentials' {
+    Write-Settings $variantText
+    $before = Hash $settings; $journalBefore = Hash $journal
+    $relayVariant = Join-Path $profileRoot 'relay-credential-fixture.json'
+    foreach ($envMap in @(
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid'},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN=' '},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN=@('secret-fixture')},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_API_KEY='secret-fixture'},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN='secret-fixture';CLAUDE_CODE_OAUTH_TOKEN='secret-fixture'},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN='sk-ant-oat-fixture'},
+      @{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN='secret-fixture';ANTHROPIC_API_KEY='secret-fixture'}
+    )) {
+      [IO.File]::WriteAllText($relayVariant, (@{env=$envMap} | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+      $r = Lane @('-ToRelay','-RelayVariant',$relayVariant,'-Apply')
+      Assert ($r.Code -ne 0 -and -not $r.Text.Contains('secret-fixture') -and -not $r.Text.Contains('sk-ant-oat-fixture')) 'Unsafe relay credential accepted or printed'
+      Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Rejected relay changed settings or journal'
+    }
+    Write-Settings $relayText
+  }
+  Case 'relay source cannot be stored in the repository or reached through a directory junction' {
+    $fakeRepo = Join-Path $root 'relay-repo'
+    $null = New-Item -ItemType Directory -Path $fakeRepo
+    Copy-Item -LiteralPath (Join-Path $repo 'Set-ClaudeLane.ps1') -Destination $fakeRepo
+    $source = Join-Path $fakeRepo 'relay.json'
+    [IO.File]::WriteAllText($source, $relayText, [Text.UTF8Encoding]::new($false))
+    $junction = Join-Path $root 'outside-repo-alias'
+    $null = New-Item -ItemType Junction -Path $junction -Target $fakeRepo
+    try {
+      Write-Settings $variantText
+      $before=Hash $settings; $journalBefore=Hash $journal
+      foreach ($candidate in @($source, (Join-Path $junction 'relay.json'))) {
+        $r = Run (Join-Path $fakeRepo 'Set-ClaudeLane.ps1') @('-SettingsPath',$settings,'-VariantPath',$variant,'-JournalPath',$journal,'-ToRelay','-RelayVariant',$candidate,'-Apply')
+        Assert ($r.Code -ne 0 -and $r.Text.Contains('outside this repository')) $r.Text
+        Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Repo source changed machine data'
+      }
+    } finally { Remove-Item -LiteralPath $junction -Force }
+    Write-Settings $relayText
+  }
+  Case 'permission repair preserves custom settings and rules with preview, raw backup, idempotence and protected rollback' {
+    $customText = '{"model":"custom-fixture","modelSettings":{"keep":true},"env":{"KEEP":"secret-fixture"},"permissions":{"defaultMode":"bypassPermissions","deny":["Read(**/custom-private/**)"],"ask":["Bash(git push:*)"]},"hooks":{"Stop":[]}}'
+    Write-Settings $customText
+    $before=Hash $settings; $journalBefore=Hash $journal
+    $backups=@(Get-ChildItem $profileRoot -Filter '*.bak-claude-env-*' | ForEach-Object FullName)
+    $r=Install @('-RepairPermissions')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW') -and -not $r.Text.Contains('secret-fixture')) $r.Text
+    Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Permission preview wrote files'
+    $r=Install @('-RepairPermissions','-Apply')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('APPLIED')) $r.Text
+    $newBackup=@(Get-ChildItem $profileRoot -Filter '*.bak-claude-env-*' | Where-Object FullName -NotIn $backups)
+    Assert ($newBackup.Count -eq 1 -and (Hash $newBackup[0].FullName) -eq $before) 'Permission repair raw backup differs'
+    $actual=Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable
+    $expected=$customText | ConvertFrom-Json -AsHashtable
+    $profilePath=[IO.Path]::GetFullPath($profileRoot).Replace('\','/')
+    $policy=((Get-Content -Raw -LiteralPath (Join-Path $repo 'settings.official-anthropic.json')).Replace('%USERPROFILE%',$profilePath) | ConvertFrom-Json -AsHashtable).permissions
+    Assert ($actual.permissions.defaultMode -eq 'default' -and $actual.permissions.disableAutoMode -eq 'disable' -and $actual.permissions.disableBypassPermissionsMode -eq 'disable') 'Permission boundary not repaired'
+    Assert ($actual.permissions.deny -contains 'Read(**/custom-private/**)') 'Custom deny lost'
+    foreach($rule in $policy.deny) { Assert ($actual.permissions.deny -ccontains $rule) 'Template deny missing' }
+    Assert ($actual.permissions.deny -ccontains "Read($profilePath/.claude/settings.json)" -and -not ($actual.permissions.deny -match '%USERPROFILE%')) 'Permission repair left unexpanded user paths'
+    foreach($key in @('defaultMode','disableAutoMode','disableBypassPermissionsMode','deny')) { $actual.permissions.Remove($key);$expected.permissions.Remove($key) }
+    Assert (($actual | ConvertTo-Json -Depth 30 -Compress) -ceq ($expected | ConvertTo-Json -Depth 30 -Compress)) 'Unrelated custom settings changed'
+    $after=Hash $settings; $journalAfter=Hash $journal
+    $r=Install @('-RepairPermissions','-Apply')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('NO_CHANGE') -and (Hash $settings) -eq $after -and (Hash $journal) -eq $journalAfter) 'Permission repair is not idempotent'
+    $r=Install @('-RollbackBackup',$newBackup[0].FullName,'-ExpectedCurrentHash',('0'*64),'-Apply')
+    Assert ($r.Code -ne 0 -and (Hash $settings) -eq $after) 'Permission rollback ignored drift'
+    $r=Install @('-RollbackBackup',$newBackup[0].FullName,'-ExpectedCurrentHash',$after,'-Apply')
+    Assert ($r.Code -eq 0 -and (Hash $settings) -eq $before) 'Permission rollback did not restore original bytes'
+    foreach($text in @('{"permissions":[]}','{"permissions":{"deny":"Read(*)"}}','{"permissions":{"deny":[null]}}','{"permissions":{"deny":[12]}}')) {
+      Write-Settings $text; $before=Hash $settings; $journalBefore=Hash $journal
+      $r=Install @('-RepairPermissions','-Apply')
+      Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Malformed permissions were changed'
+    }
+    Write-Settings '{"label":"keep"}'
+    $r=Install @('-RepairPermissions','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $j=Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable
+    Assert ($j.label -eq 'keep' -and $j.permissions.defaultMode -eq 'default') 'Missing permissions were not initialized conservatively'
+    Assert ($j.permissions.deny -ccontains "Read($profilePath/.claude/.credentials.json)") 'Missing permissions did not receive projected credential protection'
+    $before=Hash $settings; $journalBefore=Hash $journal
+    $r=Run (Join-Path $repo 'install.ps1') @('-SettingsPath',$settings,'-JournalPath',$journal,'-RepairPermissions','-Apply') @{USERPROFILE=''}
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('cannot project permission paths') -and (Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Absent profile was not rejected before writes'
   }
   Case 'tracked files carry no raw infrastructure identifiers' {
     # Regression barrier for the 2026-10-15 leaks: a real egress IP, hostname,
