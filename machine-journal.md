@@ -235,3 +235,18 @@ exit=0（期望 0）
 - boundary: filesystem_projected
 - rollback: Remove-NetFirewallRule -Name ClaudeDesktop-DirectOutGuard-TCP-Prog,ClaudeDesktop-DirectOutGuard-TCP-Pkg,ClaudeDesktop-DirectOutGuard-QUIC-Prog,ClaudeDesktop-DirectOutGuard-QUIC-Pkg; Machine env empty strings deletable with the command above
 - residue: program-path rules stop matching after the Desktop package updates (versioned image path changes); re-create with the same payload then; package-SID rules intend to survive updates but matching of full-trust desktop-bridge processes is not live-verified
+
+2026-10-17T16:05:12+08:00 | <HOST-f7563cc1>
+- operation: manual-machine-env-cleanup
+- phase: prepared
+- actions: remove-machine-scope-ALL_PROXY,remove-machine-scope-NO_PROXY (captured entries were empty REG_SZ markers)
+- executor: user-run protective command in elevated PowerShell 7
+- backup: %LOCALAPPDATA%\claude-antiban\machine-env-backups\machine-empty-proxy-bfd2e9070de243c98ca300099c57383a.bin (DPAPI CurrentUser encrypted)
+- backup_sha256: 1dfaa8fc3933a6656d540fb148c323070393523d7b02f5461e7c871ae635ee55
+- before_sha256: 71fde2ba85c3af960a78d38190d4c5bc9bbff7c35f2c0c40e75af9b38d830b51
+- after_sha256: ba5072ea520a1a797caba425297f206ea7e92db00558df8edf69b9c9c125483f
+- hash_basis: canonical target-property state; raw values omitted; encrypted backup digest is separately recorded
+- phase: applied-readback-verified
+- verification: protected snapshot readback matched the before hash; post-run readback matched the recorded target hash; raw values omitted; User-scope values were outside the action scope
+- rollback: restore only from this DPAPI backup if the target properties remain absent; preserve any later values
+- boundary: filesystem_projected; no client restart, OAuth login, token refresh, model request, or route probe
