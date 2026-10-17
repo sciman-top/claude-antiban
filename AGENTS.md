@@ -26,4 +26,6 @@
 
 ## C. 回滚与收口
 - 代码用精确提交 revert；机器用安装器的 `-RollbackBackup / -ExpectedCurrentHash` 预览后显式 Apply，禁止直接恢复整份旧文件覆盖后来修改。
-- Git 收口推送到已建立的公开远端；无远端不创建远端。不上传浏览器数据、token、机器备份或历史 bundle。保留并发改动。
+
+## D. Git profile
+- Git profile: baseline=main upstream=origin/main; push only to the established public remote, keep public content sanitized, and preserve concurrent changes.
