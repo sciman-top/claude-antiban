@@ -15,7 +15,7 @@
 - 官方进程入口只清理其子进程中的认证、配置目录、provider、模型覆盖和 TLS 验证关闭变量，保留代理/CA 与父进程；启动前须匹配官方模板、无 key helper 且 CC Switch 未运行。CLI 仅加载 user settings，managed 设置仍生效；不把此隔离外推到 Desktop 或真实出口。
 - 机器写入入口一 `install.ps1 -Apply`：仅精确移除本仓历史 SessionStart action、显式补齐 HTTP_PROXY/HTTPS_PROXY，或 `-RepairPermissions` 定点恢复模板权限模式与 deny 并集（保留其他自定义配置）；既有代理异值拒绝，大小写不重复写，遥测配置不改。
 - 机器写入入口二 `Set-ClaudeLane.ps1 -Apply`：仅 `-ToOfficial`（整文件切换到本仓 `settings.official-anthropic.json`，只接受已识别 relay 形态或哈希识别的上一版仓库模板）、`-ToRelay -RelayVariant`（整文件投影操作者自备的仓外 relay 源文件，含目录链接解析；须有 BASE_URL 和独立非空 ANTHROPIC_AUTH_TOKEN，拒绝 API-key-only、混合或已知订阅 OAuth、key helper 与 hooks；现状须为官方模板或已识别 relay；不保存或回显凭据）或 `-RollbackBackup`（哈希钉死回滚）；install/lane 均在预览及写入前拒绝运行中的 CC Switch；GUID 原字节备份 + 前后 SHA256 + journal 阶段留痕同 install.ps1。
-- 每次机器写入必须创建原字节备份并 append `machine-journal.md`（准备/读回阶段及哈希）；恢复必须绑定当前哈希，保留后续修改。运行安装器时避免其他客户端/工具同时写配置。
+- 每次机器写入必须创建原字节备份并 append `machine-journal.md`（准备/读回阶段及哈希）；恢复必须绑定当前哈希，保留后续修改。运行安装器时避免其他客户端/工具同时写配置。机器写入（含 settings.json 定点直改）已获操作者常驻授权（2026-10-18 裁决）：按上述备份/journal 流程执行即可，无需逐次请示。
 - `chrome-data/`、`qa/throwaway/` 永不入库；不得为回滚删除会话数据。机器配置与凭据只留本机。
 - 公开远端仅接受脱敏内容：推送前按 RUNBOOK.md 第 7 节核对；2026-10-16 起公开远端以脱敏副本单根历史维护，早期完整历史在核对末态一致后删除、不留副本。新增条目不得引入出口 IP、代理供应商、端点域名、部署拓扑、真实主机名或用户路径。
 
