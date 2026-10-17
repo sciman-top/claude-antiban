@@ -288,3 +288,14 @@ exit=0（期望 0）
 - phase: applied-readback-verified
 - executor: ZCode session; direct settings.json edit authorized by the operator (按推荐连续执行)
 - boundary: filesystem_projected; 危险操作 deny(29 条)全保留; no client restart; Claude 会话重启后才加载新规则
+
+## 2026-10-18T01:0x+08:00 | <ZCode-terminalallow>
+- phase: prepared
+- actions: allow-add-mcp-terminal (mcp__terminal__run_in_terminal; 模板 9a5f11d 同步; repair 键清单不含 allow, 直改持久)
+- reason: Desktop Code 终端命令经 mcp__terminal__run_in_terminal 执行, 其批准门不随 bypass 放行, 重启后 00:41 仍逐条弹确认; 操作者裁决自主执行
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-ae0435153ae9e87e9271ecaef049b218
+- before_sha256: 987ccb67ef1a7fdc145bfeea7831d6cc006e2c64e912a66b4f6552556765308d
+- after_sha256: 48548635e50526dc7e4fac9a62a3cd8b3e32836414574dc1abdfa7fb793f2831
+- phase: applied-readback-verified
+- executor: ZCode session; direct settings.json edit authorized by the operator
+- boundary: filesystem_projected; 需再次重启 Desktop 让运行中会话重读 settings; 若弹窗仍现, 下一杠杆=Desktop 终端工具自身配置
