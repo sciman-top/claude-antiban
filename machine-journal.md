@@ -203,3 +203,21 @@ exit=0（期望 0）
 - phase: applied-readback-verified
 - verification: Machine scope has no proxy variables remaining (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY all absent); User scope all four present and unchanged; proxy policy single-sourced at user scope
 - boundary: filesystem_projected; sanitized manual-change record, not installer output
+
+## 2026-10-17T13:54:23.7426475+08:00 | <HOST-f7563cc1>
+- operation: manual-machine-env-cleanup
+- phase: prepared
+- actions: remove-machine-scope-HTTP_PROXY,remove-machine-scope-HTTPS_PROXY
+- executor: authorized UAC PowerShell 7
+- backup: %LOCALAPPDATA%\claude-antiban\machine-env-backups\machine-proxy-2c3ff79d1bb24a85a83b0bc766400f09.bin (DPAPI CurrentUser encrypted)
+- before_sha256: 85b692e35ed3d81c891d3abeb8ba550ca533128ce87046260ac9b25250e26ac8 (encrypted snapshot file)
+- after_sha256: pending
+- hash_basis: before is the protected backup file; final is the canonical target-absent state
+- note: raw values omitted; User scope unchanged; Machine ALL_PROXY/NO_PROXY were present before this operation and were preserved within the authorized scope
+
+- phase: applied-readback-verified
+- after_sha256: a53e6b8589861e35b764fbed24cf915d339a3d239b2352e4bff47c4890cc9922
+- verification: Machine HTTP_PROXY/HTTPS_PROXY absent; User scope unchanged; Machine ALL_PROXY/NO_PROXY still present and unchanged
+- reconciliation: differs from the 2026-10-17T13:43:47 entry reporting all Machine proxy variables absent; reappearance source unresolved; direct Scheduled Task action and Run-key scan found no explicit environment writer
+- rollback: restore from local DPAPI backup only if both target Machine values remain absent; preserve later values
+- boundary: filesystem_projected; no process restart, login, token refresh, model request, or route probe
