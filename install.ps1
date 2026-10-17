@@ -59,7 +59,7 @@ function ConvertFrom-SettingsToken($Token) {
 function Read-Settings([byte[]]$Bytes) {
   $reader = $null
   try {
-    $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes).TrimStart([char]0xfeff)
     # PS 7.3/7.4 lack ConvertFrom-Json -DateKind String. Use the bundled parser
     # with date conversion disabled so unrelated JSON strings survive every write.
     $reader = [Newtonsoft.Json.JsonTextReader]::new([IO.StringReader]::new($text))
@@ -92,7 +92,6 @@ if (-not (Test-Path -LiteralPath $settings -PathType Leaf)) { throw 'Settings fi
 if ((Get-Item -LiteralPath $settings).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing a settings symlink.' }
 $beforeBytes = [IO.File]::ReadAllBytes($settings)
 $beforeHash = Get-Hash $beforeBytes
-$json = Read-Settings $beforeBytes
 $actions = [Collections.Generic.List[string]]::new()
 
 if ($RollbackBackup) {
@@ -108,6 +107,7 @@ if ($RollbackBackup) {
   $null = Read-Settings $afterBytes
   $actions.Add('restore-unchanged-snapshot')
 } else {
+  $json = Read-Settings $beforeBytes
   if ($ExpectedCurrentHash) { throw 'ExpectedCurrentHash requires RollbackBackup.' }
   if ($Proxy -and -not $ConfigureProxy) { throw 'Proxy requires ConfigureProxy; configuration is never implicit.' }
   if ($RepairPermissions) {
@@ -152,7 +152,7 @@ if ($RollbackBackup) {
   }
   if ($ConfigureProxy) {
     $uri = $null
-    if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https') -or $uri.UserInfo) { throw 'Supply an HTTP/HTTPS proxy without embedded credentials.' }
+    if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https') -or -not $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'Supply an HTTP/HTTPS proxy without embedded credentials, query parameters or fragments.' }
     if (-not $json.Contains('env')) { $json['env'] = @{} }
     if ($json['env'] -isnot [Collections.IDictionary]) { throw 'env must be an object.' }
     foreach ($name in @('HTTP_PROXY','HTTPS_PROXY')) {

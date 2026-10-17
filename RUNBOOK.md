@@ -1,6 +1,6 @@
 # Claude 使用资格、环境诊断与配置修复
 
-**修订：2026-10-17。** 本仓历史名称为 claude-antiban；工具用于减少配置错误，没有防封保证。
+**修订：2026-10-18。** 本仓历史名称为 claude-antiban；工具用于减少配置错误，没有防封保证。
 旧文档中的“固定机房 IP 最优”“改美国时区”“无泄漏”“订阅 OAuth 接入 CPA”等结论已撤回。
 历史机器日志只记录当时操作，不再作为安全或当前部署状态证明。
 
@@ -13,8 +13,11 @@
 - 按**实际所在地**与主体的注册地、总部及控制关系判断资格，不能用代理的所在地替换。
   中国大陆不在本次核对的支持名单；实际仍在中国大陆的个人，不应据此工具开始注册或登录。
   若官方政策或实际情况改变，重新核对；授权云渠道也有自己的准入条件，并不自动消除地区限制。
-- 2026-10-17 读取地区政策页时，页面标注生效日为 2026-11-12；未来生效文本不能整体当作
-  当日已生效条款。资格决定须核对适用版本，不能用本仓历史核对日期或代理出口代替确认。
+- 2026-10-18 读取地区政策与 Usage Policy 页面时，两者均标注生效日为 2026-11-12；
+  未来生效文本不能整体当作当日已生效条款。当前地区名单另核对
+  [官方可用地区帮助页](https://support.claude.com/en/articles/8461763-where-can-i-access-claude)，
+  Usage Policy 的当前与未来版本区别见第 8 节。资格决定须核对适用版本，
+  不能用本仓历史核对日期或代理出口代替确认。
 - 使用真实、准确且本人有权使用的账号和付款信息，按当前官方验证流程办理。
   不购买来历不明账号、借用身份、用接码或换号规避限制；不共享订阅凭据。
 - 误判、停用或拒绝访问时保存脱敏错误、时间和请求 ID，通过
@@ -40,7 +43,8 @@
 
 [Claude Code 网络配置](https://code.claude.com/docs/en/network-config)：
 CLI 支持 HTTP/HTTPS 代理，不支持 SOCKS 代理。不要把 SOCKS 端口误填为 HTTP；
-不要通过关闭证书验证来“修复”TLS。代理 URI 不写用户名、密码或 token。
+不要通过关闭证书验证来“修复”TLS。代理 URI 不写用户名、密码或 token；
+安装器与出口诊断均拒绝 userinfo、query 和 fragment，避免凭据经 URL 传播。
 
 分别核对 Process / User / Machine 的 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY、NO_PROXY，
 以及 managed、user、project、local settings 和实际启动器。旧终端、GUI 或后台进程
@@ -159,6 +163,9 @@ Apply 将候选 JSON 写入同目录临时文件，校验后原子替换；
 ### 精确回滚
 
 先从本次 APPLIED 输出/日志取备份路径和 after_sha256；当前文件如已变化则拒绝恢复。
+若当前 JSON 已损坏，先核对现场并计算当前文件 SHA256，再将该哈希显式传入
+ExpectedCurrentHash；允许恢复有效备份，损坏的原字节仍另行备份。备份本身无效则拒绝。
+安装器与 lane 切换器严格校验 UTF-8；允许 UTF-8 BOM，拒绝非法字节，避免将损坏内容替换字符化后写回。
 
 ```powershell
 pwsh -NoProfile -File .\install.ps1 -RollbackBackup '<本次备份绝对路径>' -ExpectedCurrentHash '<本次 after_sha256>'
@@ -189,7 +196,7 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
   源文件是**完整的机器设置**（整文件替换）：以当前官方模板为底、只追加一个 `env` 块；写成最小文件会丢掉权限模板、deny 列表与 Manual 设置。
 - ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含有效绝对 URL
   `env.ANTHROPIC_BASE_URL` 和非空字符串 `env.ANTHROPIC_AUTH_TOKEN`。远端要求 HTTPS，HTTP 仅允许字面
-  loopback IP 或 localhost；拒绝空值、嵌入凭据和 fragment。不得含 `apiKeyHelper`、`hooks`、`ANTHROPIC_API_KEY` 或
+  loopback IP 或 localhost；拒绝空值、userinfo、query 和 fragment，认证只能放独立字段。不得含 `apiKeyHelper`、`hooks`、`ANTHROPIC_API_KEY` 或
   `CLAUDE_CODE_OAUTH_TOKEN`。已知订阅 OAuth 前缀也拒绝；工具不能证明任意 opaque token 的来源，
   操作者须确认它是独立、获授权的网关凭据。API-key-only 需要客户端交互确认后才取代订阅认证，
   此切换入口无法保证该确认已完成，因此拒绝该形式；不自动删除已保存登录来补齐条件。
@@ -238,7 +245,9 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -LaunchOfficial
 两种动作均要求设置与模板字节一致，拒绝模板中的认证 helper、路由覆盖和运行中的
 CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_OAUTH_*`（含 refresh token/scopes）、
 `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`、Bedrock/Vertex/Foundry/Anthropic AWS/Mantle
-选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`、`MAX_MCP_OUTPUT_TOKENS`）、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
+选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`、`MAX_MCP_OUTPUT_TOKENS`）、登录等命令锁定、`NODE_TLS_REJECT_UNAUTHORIZED` 与 `NODE_OPTIONS`。
+后者避免 Node/npm 发行方式继承预加载或 TLS 参数；模板若含该键也拒绝启动。
+这是子进程环境隔离，不代表已验证所有发行方式或 Desktop 的运行时行为。
 父进程、User/Machine 环境、凭据文件均不改写；HTTP/HTTPS/ALL_PROXY/NO_PROXY、
 自定义 CA 与隐私偏好原样保留，不预设应当直连。
 
@@ -451,7 +460,8 @@ append-only 指操作历史而言：历史条目里已经出现的凭据、订�
 
 本仓只区分下面两个分支，不存在“先把本地环境处理好再注册”的第三条路径：
 Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop 与远端 CPA 的配置
-都不能改变第 1 节的资格判断。本节政策引用于 2026-10-16 线上核对原文。
+都不能改变第 1 节的资格判断。以下政策版本于 2026-10-18 线上核对，
+区分当日依据与 2026-11-12 起生效的新文本。
 
 ### A. 资格不成立（当前默认分支）
 
@@ -461,17 +471,20 @@ Windows 系统设置、指纹、代理出口、浏览器、Claude Code/Desktop �
   用 CPA 或其他网关代持、中转订阅凭据；创建多账号或换号；以“测试风险”为目的注册账号后再观察。
   判据是“伪装或伪造身份”，不包含“封堵已配置出口的泄漏”：`start-claude-chrome-leakless.cmd`
   只做后者，它同样不改变第 1 节的资格判断与本节结论。
-- 与上述边界相关的 Usage Policy `Do Not Abuse Our Platform` 条款包括：
-  “Access, facilitate, or provide others (including end users) with access to our products or
-  services in violation of our Supported Regions Policy”；
-  “Intentionally bypass or interfere with capabilities, restrictions, or guardrails established
-  within our products, including by circumvention of the account sign-up or log-in process…”；
+- 当日适用口径按 [2025-09-15 生效版 Usage Policy](https://www.anthropic.com/legal/archive/22742366-2ef0-4c7a-a833-6523f10d3944)
+  的 `Do Not Abuse Our Platform` 核对。该版已包含：
+  “Access or facilitate account or API access to Claude to persons, entities, or users in violation of our Supported Regions Policy”；
   “Utilize automation in account creation or to engage in spammy behavior”；
-  “Circumvent a ban through the use of a different account…”；
-  “Resell, proxy, or otherwise provide access to Claude through unauthorized means, including
-  services that route requests through consumer subscriptions or misrepresent the product or
-  client being used”。这些条款说明地区违规、绕过注册限制、换号和未授权中转的
-  政策风险；不能据此推断每次操作是否被检测、记录，或必然影响后续申诉结果。
+  “Circumvent a ban through the use of a different account…”；以及为产生有害输出而
+  绕过模型限制、guardrails 的约束。
+- 第三方代持、中转订阅凭据的当日依据另见
+  [Claude Code 合规说明](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)：
+  第三方开发者不得在自有应用提供 Claude.ai 登录、代用户使用 Free/Pro/Max 凭据转发请求，
+  或收集、存储、中转 Claude.ai 凭据与 session token；这不把所有授权 API 网关等同于违规。
+- [新版 Usage Policy](https://www.anthropic.com/legal/aup)标注 2026-11-12 生效，
+  进一步明确注册/登录流程绕过、未授权订阅中转和客户端表述等边界。
+  在该日期前不把这些新增措辞当作已生效原文；届时或政策变化后重新核对。
+  上述依据不证明每次操作是否被检测、记录，或必然影响后续申诉结果。
 - 政策或实际情况变化时重新核对原文，不凭旧结论沿用：
   [Supported Regions Policy](https://www.anthropic.com/legal/supported-regions)、
   [Usage Policy](https://www.anthropic.com/legal/aup)、

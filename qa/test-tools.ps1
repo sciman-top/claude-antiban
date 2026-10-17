@@ -40,7 +40,7 @@ function Run([string]$Script, [string[]]$ScriptArgs = @(), [hashtable]$Environme
   $info.RedirectStandardError = $true
   $null = $info.Environment.Remove('COMPUTERNAME')
   $info.Environment['USERPROFILE'] = $profileRoot
-  $diagnosticVariables = @('ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_TLS_REJECT_UNAUTHORIZED')
+  $diagnosticVariables = @('ANTHROPIC_BASE_URL','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_TLS_REJECT_UNAUTHORIZED','NODE_OPTIONS')
   foreach ($key in @($info.Environment.Keys)) {
     if ($key -iin $diagnosticVariables) { $null = $info.Environment.Remove($key) }
   }
@@ -103,7 +103,7 @@ function global:Get-ItemProperty {
 }
 function global:Invoke-WebRequest {
   param($Uri,$Proxy,$TimeoutSec,$MaximumRedirection)
-  if($Mode -in @('default','restore','surface','surface-no-proxy')) { throw 'Unexpected network request' }
+  if($Mode -in @('default','restore','surface','surface-no-proxy','unsafe-proxy')) { throw 'Unexpected network request' }
   if($Mode -eq 'unreachable') { throw 'Fixture unreachable' }
   if($Uri -ne 'https://api.ipify.org' -or $TimeoutSec -ne 8 -or $MaximumRedirection -ne 0) { throw 'Unexpected diagnostic request' }
   if($Mode -eq 'invalid') { return @{Content='not-an-ip'} }
@@ -112,6 +112,7 @@ function global:Invoke-WebRequest {
 if($Mode -eq 'default') { & $Script -SettingsPath $SettingsPath }
 elseif($Mode -eq 'restore') { & $Script -Restore -SettingsPath $SettingsPath }
 elseif($Mode -eq 'retired') { & $Script }
+elseif($Mode -eq 'unsafe-proxy') { & $Script -CheckExitIp -Proxy $SettingsPath }
 elseif($Mode -in @('surface','surface-pac','surface-ipv6','surface-mixed')) { & $Script -RepoRoot $RepoRoot }
 elseif($Mode -eq 'surface-no-proxy') { & $Script -RepoRoot $RepoRoot -CheckExitIp }
 elseif($Mode -eq 'surface-exit') { & $Script -RepoRoot $RepoRoot -CheckExitIp -ExpectedIp '203.0.113.9' -Proxy 'http://127.0.0.1:1' }
@@ -212,6 +213,73 @@ try {
     Assert ($r.Code -eq 0 -and $r.Text.Contains('NO_CHANGE')) 'Non-owned path matched as owned'
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalHash) 'Non-owned hook modified'
   }
+  Case 'rollback recovers corrupt current JSON without weakening hash or backup validation' {
+    Write-Settings '{}'; $validHash=Hash $settings
+    $existingBackups=@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*' | ForEach-Object FullName)
+    $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808','-Apply')
+    Assert ($r.Code -eq 0) $r.Text
+    $newBackups=@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*' | Where-Object FullName -NotIn $existingBackups)
+    Assert ($newBackups.Count -eq 1) 'Initial apply did not create exactly one backup'
+    $validBackup=$newBackups[0].FullName
+    Write-Settings '{broken-current-fixture'
+    $brokenHash=Hash $settings; $journalBefore=Hash $journal
+    $backupsBefore=@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*').Count
+    $r=Install @('-RollbackBackup',$validBackup,'-ExpectedCurrentHash',('0'*64),'-Apply')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('current hash differs')) 'Corrupt JSON bypassed the drift guard'
+    $invalidBackup=Join-Path $profileRoot ((Split-Path $settings -Leaf)+'.bak-claude-env-invalid-fixture')
+    [IO.File]::WriteAllText($invalidBackup,'{broken-backup-fixture')
+    $r=Install @('-RollbackBackup',$invalidBackup,'-ExpectedCurrentHash',$brokenHash,'-Apply')
+    Assert ($r.Code -ne 0 -and $r.Text.Contains('valid JSON object')) 'Invalid backup accepted'
+    Remove-Item -LiteralPath $invalidBackup
+    $r=Install @('-RollbackBackup',$validBackup,'-ExpectedCurrentHash',$brokenHash)
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) $r.Text
+    Assert ((Hash $settings) -eq $brokenHash -and (Hash $journal) -eq $journalBefore) 'Rejected rollback or preview wrote data'
+    Assert (@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*').Count -eq $backupsBefore) 'Rejected rollback or preview created a backup'
+    $existingBackups=@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*' | ForEach-Object FullName)
+    $r=Install @('-RollbackBackup',$validBackup,'-ExpectedCurrentHash',$brokenHash,'-Apply')
+    Assert ($r.Code -eq 0 -and (Hash $settings) -eq $validHash) $r.Text
+    $newBackups=@(Get-ChildItem -LiteralPath $profileRoot -Filter '*.bak-*' | Where-Object FullName -NotIn $existingBackups)
+    Assert ($newBackups.Count -eq 1) 'Rollback did not create exactly one backup'
+    $corruptBackup=$newBackups[0].FullName
+    Assert ((Hash $corruptBackup) -eq $brokenHash) 'Corrupt original bytes were not preserved'
+    Assert ((Get-Content -Raw -LiteralPath $journal).Contains('applied-readback-verified')) 'Recovery lacks readback evidence'
+  }
+  Case 'configuration readers reject malformed UTF-8 and accept UTF-8 BOM' {
+    $invalidBytes=[byte[]]@(0x7b,0x22,0x78,0x22,0x3a,0x22,0xff,0x22,0x7d)
+    [IO.File]::WriteAllBytes($settings,$invalidBytes)
+    $before=Hash $settings; $journalBefore=Hash $journal
+    $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808','-Apply')
+    Assert ($r.Code -ne 0) 'Installer accepted malformed UTF-8 settings'
+    $r=Lane @()
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('"current_lane":"invalid"')) 'Lane status accepted malformed UTF-8 settings'
+    $r=Lane @('-ToOfficial','-Apply')
+    Assert ($r.Code -ne 0) 'Lane accepted malformed UTF-8 current settings'
+    Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Invalid settings were modified'
+    Write-Settings $relayText; $before=Hash $settings
+    [IO.File]::WriteAllBytes($variant,$invalidBytes)
+    $r=Lane @('-ToOfficial','-Apply')
+    Assert ($r.Code -ne 0 -and (Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Invalid variant was projected'
+    foreach($kind in @('env','lane')) {
+      $invalidBackup=$settings+'.bak-claude-'+$kind+'-invalid-utf8-fixture'
+      [IO.File]::WriteAllBytes($invalidBackup,$invalidBytes)
+      try {
+        foreach($options in @(@('-RollbackBackup',$invalidBackup,'-ExpectedCurrentHash',$before),@('-RollbackBackup',$invalidBackup,'-ExpectedCurrentHash',$before,'-Apply'))) {
+          $r=if($kind -eq 'env'){ Install $options }else{ Lane $options }
+          Assert ($r.Code -ne 0 -and $r.Text.Contains('valid JSON object')) 'Malformed UTF-8 backup accepted'
+          Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Malformed backup rollback wrote data'
+        }
+      } finally { Remove-Item -LiteralPath $invalidBackup }
+    }
+    [IO.File]::WriteAllText($settings,'{}',[Text.UTF8Encoding]::new($true))
+    $before=Hash $settings
+    $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW') -and (Hash $settings) -eq $before) 'Valid UTF-8 BOM settings rejected or modified'
+    Write-Settings $relayText
+    [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($true))
+    $r=Lane @('-ToOfficial')
+    Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) 'Valid UTF-8 BOM variant rejected'
+    [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
+  }
   Case 'empty, single and multiple hook arrays preserve shape' {
     foreach ($count in @(0,1,2)) {
       $actions = @(for($i=0; $i -lt $count; $i++){ $legacy })
@@ -245,6 +313,21 @@ try {
     try { $r=Install @('-ConfigureProxy','-Proxy','http://127.0.0.1:10808','-Apply'); Assert ($r.Code -ne 0) ("Locked file accepted: " + $r.Text) }
     finally { $lock.Dispose() }
     Assert ((Hash $settings) -eq $before) 'Locked file modified'
+  }
+  Case 'proxy URL credentials in queries and fragments are rejected before writes or network' {
+    Write-Settings '{}'; $before=Hash $settings; $journalBefore=Hash $journal
+    foreach($proxy in @('http://127.0.0.1:10808?token=private-query-fixture','https://127.0.0.1:10808/#private-fragment-fixture','http://user:private-userinfo-fixture@127.0.0.1:10808')) {
+      foreach($options in @(@('-ConfigureProxy','-Proxy',$proxy),@('-ConfigureProxy','-Proxy',$proxy,'-Apply'))) {
+        $r=Install $options
+        Assert ($r.Code -ne 0) 'Unsafe proxy accepted by installer'
+        Assert (-not $r.Text.Contains('private-query-fixture') -and -not $r.Text.Contains('private-fragment-fixture') -and -not $r.Text.Contains('private-userinfo-fixture')) 'Rejected proxy leaked a value'
+        Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Rejected proxy wrote data'
+      }
+      # A global mock throws if validation accidentally proceeds to a request.
+      $r=Run $mock @('-Script',$hookPath,'-Mode','unsafe-proxy','-SettingsPath',$proxy)
+      Assert ($r.Code -eq 3 -and $r.Text.Contains('Supply an explicit HTTP/HTTPS proxy')) 'Unsafe proxy reached the network branch'
+      Assert (-not $r.Text.Contains('private-query-fixture') -and -not $r.Text.Contains('private-fragment-fixture') -and -not $r.Text.Contains('private-userinfo-fixture')) 'Diagnostic leaked a rejected proxy'
+    }
   }
   Case 'install and lane fail closed while cc-switch is running' {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
@@ -482,21 +565,22 @@ try {
       NODE_EXTRA_CA_CERTS='fixture-ca-only'; MAX_THINKING_TOKENS='1'; CLAUDE_CODE_EXTRA_BODY='{"k":"private-value-fixture"}'; MAX_MCP_OUTPUT_TOKENS='1'
       CLAUDE_CODE_USE_ANTHROPIC_AWS='1'; CLAUDE_CODE_USE_MANTLE='1'; CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST='1'
       CLAUDE_CODE_OAUTH_REFRESH_TOKEN='private-refresh-fixture'; CLAUDE_CODE_OAUTH_SCOPES='private-scopes-fixture'
+      NODE_OPTIONS='--require=private-preload-fixture'
     }
     Assert ($r.Code -eq 0) $r.Text
-    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY','MAX_MCP_OUTPUT_TOKENS','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES')) {
+    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','NODE_OPTIONS','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY','MAX_MCP_OUTPUT_TOKENS','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES')) {
       Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=False ')) "Override survived: $name"
     }
     foreach ($name in @('HTTP_PROXY','NODE_EXTRA_CA_CERTS')) {
       Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=True ')) "Network configuration removed: $name"
     }
-    Assert (-not $r.Text.Contains('private-token-fixture') -and -not $r.Text.Contains('private-value-fixture') -and -not $r.Text.Contains('private-refresh-fixture') -and -not $r.Text.Contains('private-scopes-fixture')) 'Child preflight leaked values'
+    Assert (-not $r.Text.Contains('private-token-fixture') -and -not $r.Text.Contains('private-value-fixture') -and -not $r.Text.Contains('private-refresh-fixture') -and -not $r.Text.Contains('private-scopes-fixture') -and -not $r.Text.Contains('private-preload-fixture')) 'Child preflight leaked values'
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Child preflight wrote data'
     Write-Settings $relayText
     [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
   }
   Case 'official child refuses mismatched settings and credential-bearing variants' {
-    foreach ($text in @('{"apiKeyHelper":"fixture-helper"}','{"env":{"ANTHROPIC_BASE_URL":"https://private-value-fixture.invalid"}}','{"env":{"CLAUDE_CONFIG_DIR":"private-config-fixture"}}','{"env":{"MAX_THINKING_TOKENS":"1"}}','{"env":{"CLAUDE_CODE_EXTRA_BODY":"{}"}}','{"env":{"MAX_MCP_OUTPUT_TOKENS":"1"}}','{"env":[]}','{"env":"private-value-fixture"}')) {
+    foreach ($text in @('{"apiKeyHelper":"fixture-helper"}','{"env":{"ANTHROPIC_BASE_URL":"https://private-value-fixture.invalid"}}','{"env":{"CLAUDE_CONFIG_DIR":"private-config-fixture"}}','{"env":{"MAX_THINKING_TOKENS":"1"}}','{"env":{"CLAUDE_CODE_EXTRA_BODY":"{}"}}','{"env":{"MAX_MCP_OUTPUT_TOKENS":"1"}}','{"env":{"NODE_OPTIONS":"--require=private-value-fixture"}}','{"env":[]}','{"env":"private-value-fixture"}')) {
       [IO.File]::WriteAllText($variant,$text,[Text.UTF8Encoding]::new($false)); Write-Settings $text
       foreach ($action in @('-OfficialPreflight','-LaunchOfficial')) {
         $r = Lane @($action)
@@ -694,7 +778,7 @@ try {
     Write-Settings $variantText
     $before=Hash $settings; $journalBefore=Hash $journal
     $source=Join-Path $profileRoot 'endpoint-fixture.json'
-    foreach ($endpoint in @('', ' ', @('https://relay-fixture.invalid'), 'relative/path', 'ftp://relay-fixture.invalid', 'http://relay-fixture.invalid', 'https://private-user:private-secret@relay-fixture.invalid', 'https://relay-fixture.invalid/#private-secret')) {
+    foreach ($endpoint in @('', ' ', @('https://relay-fixture.invalid'), 'relative/path', 'ftp://relay-fixture.invalid', 'http://relay-fixture.invalid', 'https://private-user:private-secret@relay-fixture.invalid', 'https://relay-fixture.invalid/#private-secret', 'https://relay-fixture.invalid/anthropic?token=private-secret', 'http://127.0.0.1:1234?token=private-secret')) {
       [IO.File]::WriteAllText($source,(@{env=@{ANTHROPIC_BASE_URL=$endpoint;ANTHROPIC_AUTH_TOKEN='private-bearer-fixture'}} | ConvertTo-Json -Depth 10))
       foreach ($options in @(@('-ToRelay','-RelayVariant',$source),@('-ToRelay','-RelayVariant',$source,'-Apply'))) {
         $r=Lane $options

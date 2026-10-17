@@ -7,8 +7,8 @@ if (-not $CheckExitIp) {
   exit 0
 }
 $proxyUri = $null
-if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$proxyUri) -or $proxyUri.Scheme -notin @('http','https') -or $proxyUri.UserInfo) {
-  [Console]::Error.WriteLine('Supply an explicit HTTP/HTTPS proxy without embedded credentials.')
+if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$proxyUri) -or $proxyUri.Scheme -notin @('http','https') -or -not $proxyUri.Host -or $proxyUri.UserInfo -or $proxyUri.Query -or $proxyUri.Fragment) {
+  [Console]::Error.WriteLine('Supply an explicit HTTP/HTTPS proxy without embedded credentials, query parameters or fragments.')
   exit 3
 }
 $expected = $null

@@ -29,7 +29,7 @@ $legacyOfficialTemplateHashes = @(
 function Test-OfficialOverride([string]$Name) {
   # Beyond the ANTHROPIC_ prefix, these documented model/request overrides must
   # not leak from a relay environment into an official-lane child process.
-  return $Name -imatch '^ANTHROPIC_|^CLAUDE_CODE_OAUTH_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_USE_ANTHROPIC_AWS|CLAUDE_CODE_USE_MANTLE|CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|CLAUDE_CODE_EXTRA_BODY|MAX_THINKING_TOKENS|MAX_MCP_OUTPUT_TOKENS|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
+  return $Name -imatch '^ANTHROPIC_|^CLAUDE_CODE_OAUTH_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_USE_ANTHROPIC_AWS|CLAUDE_CODE_USE_MANTLE|CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|CLAUDE_CODE_EXTRA_BODY|MAX_THINKING_TOKENS|MAX_MCP_OUTPUT_TOKENS|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED|NODE_OPTIONS)$'
 }
 
 function Get-Hash([byte[]]$Bytes) {
@@ -59,7 +59,7 @@ function Get-JournalBackupPath([string]$Path) {
 }
 function Read-Json([byte[]]$Bytes) {
   try {
-    $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes).TrimStart([char]0xfeff)
     $value = ConvertFrom-Json -InputObject $text -AsHashtable -Depth 100
     if ($value -isnot [Collections.IDictionary]) { throw 'root' }
     return $value
@@ -68,7 +68,7 @@ function Read-Json([byte[]]$Bytes) {
 function Get-ProjectedVariantBytes([string]$Path) {
   if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw '%USERPROFILE% is not set; cannot project the official variant.' }
   $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
-  $variantText = [IO.File]::ReadAllText([IO.Path]::GetFullPath($Path)).Replace('%USERPROFILE%', $profilePath)
+  $variantText = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($Path))).TrimStart([char]0xfeff).Replace('%USERPROFILE%', $profilePath)
   $bytes = [Text.UTF8Encoding]::new($false).GetBytes($variantText)
   $null = Read-Json $bytes
   return ,$bytes
@@ -84,7 +84,7 @@ function Test-KeyPresent($Json, [string]$Name) {
 function Test-LegacyOfficialTemplate([byte[]]$Bytes) {
   if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { return $false }
   try {
-    $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes).TrimStart([char]0xfeff)
     $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
     $normalized = $text.Replace($profilePath, '%USERPROFILE%').Replace("`r`n", "`n").Replace("`r", "`n")
     $normalizedBytes = [Text.UTF8Encoding]::new($false).GetBytes($normalized)
@@ -125,8 +125,8 @@ function Assert-RelayCredential($Json) {
   if ($urlKeys.Count -ne 1 -or $map[$urlKeys[0]] -isnot [string] -or
       [string]::IsNullOrWhiteSpace($map[$urlKeys[0]]) -or
       -not [uri]::TryCreate($map[$urlKeys[0]], [UriKind]::Absolute, [ref]$uri) -or
-      $uri.Scheme -notin @('http','https') -or -not $uri.Host -or $uri.UserInfo -or $uri.Fragment) {
-    throw 'Relay endpoint must be an absolute HTTP/HTTPS URL without embedded credentials or fragments; no replacement.'
+      $uri.Scheme -notin @('http','https') -or -not $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) {
+    throw 'Relay endpoint must be an absolute HTTP/HTTPS URL without embedded credentials, query parameters or fragments; no replacement.'
   }
   $hostIp = $null
   $loopback = $uri.Host -ieq 'localhost' -or
