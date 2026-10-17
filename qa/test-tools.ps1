@@ -145,6 +145,12 @@ try {
     Assert (-not $official.permissions.Contains('disableAutoMode') -and -not $official.permissions.Contains('disableBypassPermissionsMode')) 'Approval-mode disable pins must stay absent'
     Assert (-not $official.Contains('env') -and -not $official.permissions.Contains('additionalDirectories')) 'Official template must not carry machine routing or extra workspace paths'
     Assert (-not $official.Contains('statusLine')) 'Official template must not reference an unavailable local status script'
+    foreach ($rule in @('PowerShell(git reset --hard*)','PowerShell(git clean -*)','PowerShell(Remove-Item *)','PowerShell(Format-Volume *)','PowerShell(reg delete*)','PowerShell(powershell.exe:*)','PowerShell(pwsh.exe:*)')) {
+      Assert ($official.permissions.deny -ccontains $rule) "Missing native PowerShell protection: $rule"
+    }
+    foreach ($rule in @('Bash(powershell.exe:*)','Bash(pwsh.exe:*)')) {
+      Assert ($official.permissions.deny -ccontains $rule) "Missing nested shell protection: $rule"
+    }
     Assert ($officialText -notmatch '127\.0\.0\.1|skills-manager|claude-dashboard') 'Official template still carries machine-specific values'
   }
   Case 'preview leaves bytes and journal untouched' {
@@ -165,7 +171,7 @@ try {
     Assert ($journalText -notmatch '(?m)^## .*\|\s*$') 'Missing machine name when environment variable is absent'
     Assert ($journalText -match '(?m)^## .*\| <HOST-[0-9a-f]{8}>\s*$') 'Journal header must carry a host pseudonym, not a raw hostname'
     $journalBackup = [regex]::Match($journalText, '(?m)^- backup: (?<path>.+?)\r?$').Groups['path'].Value
-    Assert ($journalBackup.StartsWith('%USERPROFILE%') -and $journalBackup -match '\.bak-claude-env-[a-f0-9]{32}$') 'Journal backup path must use %USERPROFILE%'
+    Assert ($journalBackup -match '^<SETTINGS-DIR>\\<SETTINGS-FILE>\.bak-claude-env-[a-f0-9]{32}$') 'Nonstandard settings path must use placeholders'
     Assert (-not $journalText.Contains($root)) 'Journal leaked the fixture user profile'
     $actual = Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable
     $expected = $fixture | ConvertFrom-Json -AsHashtable
@@ -273,6 +279,25 @@ try {
     $laneLog = Get-Content -Raw -LiteralPath $outsideLaneJournal
     Assert (-not $laneLog.Contains($root)) 'Lane journal leaked an external settings path'
     Assert ($laneLog -match '(?m)^- backup: <SETTINGS-DIR>\\<SETTINGS-FILE>\.bak-claude-lane-[a-f0-9]{32}\r?$') 'Lane backup path was not reduced to the placeholder form'
+  }
+  Case 'journal preserves only the standard settings path within the user profile' {
+    foreach ($relative in @('.claude/settings.json','private-organization/settings.json')) {
+      $target = Join-Path $profileRoot $relative
+      $null = New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force
+      foreach ($writer in @('install','lane')) {
+        $log = Join-Path $root ($writer + '-path-' + [guid]::NewGuid().ToString('N') + '.md')
+        $source = if ($writer -eq 'install') { $fixture } else { $relayText }
+        [IO.File]::WriteAllText($target,$source,[Text.UTF8Encoding]::new($false))
+        $options = @('-SettingsPath',$target,'-JournalPath',$log)
+        if ($writer -eq 'install') { $r = Run (Join-Path $repo 'install.ps1') ($options + @('-RemoveLegacyHook','-Apply')) }
+        else { $r = Run (Join-Path $repo 'Set-ClaudeLane.ps1') ($options + @('-VariantPath',$variant,'-ToOfficial','-Apply')) }
+        Assert ($r.Code -eq 0) $r.Text
+        $text = Get-Content -Raw -LiteralPath $log
+        Assert (-not $text.Contains('private-organization') -and -not $text.Contains($root)) 'User-relative directory leaked into the journal'
+        $prefix = if ($relative -eq '.claude/settings.json') { '%USERPROFILE%\.claude\settings.json.bak-' } else { '<SETTINGS-DIR>\<SETTINGS-FILE>.bak-' }
+        Assert ($text.Contains($prefix)) 'Wrong journal path classification'
+      }
+    }
   }
   Case 'diagnostic success, mismatch, unreachable and invalid responses' {
     foreach($mode in @('success','mismatch','unreachable','invalid','retired')) {
@@ -453,15 +478,17 @@ try {
       ANTHROPIC_BASE_URL='https://private-value-fixture.invalid'; ANTHROPIC_AUTH_TOKEN='private-token-fixture';
       CLAUDE_CONFIG_DIR='private-config-fixture'; CLAUDE_CODE_USE_BEDROCK='1'; NODE_TLS_REJECT_UNAUTHORIZED='0'; HTTP_PROXY='http://proxy-fixture.invalid';
       NODE_EXTRA_CA_CERTS='fixture-ca-only'; MAX_THINKING_TOKENS='1'; CLAUDE_CODE_EXTRA_BODY='{"k":"private-value-fixture"}'; MAX_MCP_OUTPUT_TOKENS='1'
+      CLAUDE_CODE_USE_ANTHROPIC_AWS='1'; CLAUDE_CODE_USE_MANTLE='1'; CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST='1'
+      CLAUDE_CODE_OAUTH_REFRESH_TOKEN='private-refresh-fixture'; CLAUDE_CODE_OAUTH_SCOPES='private-scopes-fixture'
     }
     Assert ($r.Code -eq 0) $r.Text
-    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY','MAX_MCP_OUTPUT_TOKENS')) {
+    foreach ($name in @('ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','NODE_TLS_REJECT_UNAUTHORIZED','MAX_THINKING_TOKENS','CLAUDE_CODE_EXTRA_BODY','MAX_MCP_OUTPUT_TOKENS','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES')) {
       Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=False ')) "Override survived: $name"
     }
     foreach ($name in @('HTTP_PROXY','NODE_EXTRA_CA_CERTS')) {
       Assert ($r.Text -match ("(?m)^" + $name + ' settings_present=False process_present=True ')) "Network configuration removed: $name"
     }
-    Assert (-not $r.Text.Contains('private-token-fixture') -and -not $r.Text.Contains('private-value-fixture')) 'Child preflight leaked values'
+    Assert (-not $r.Text.Contains('private-token-fixture') -and -not $r.Text.Contains('private-value-fixture') -and -not $r.Text.Contains('private-refresh-fixture') -and -not $r.Text.Contains('private-scopes-fixture')) 'Child preflight leaked values'
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Child preflight wrote data'
     Write-Settings $relayText
     [IO.File]::WriteAllText($variant,$variantText,[Text.UTF8Encoding]::new($false))
@@ -506,7 +533,7 @@ try {
     Assert ($journalText.Contains('applied-readback-verified')) 'Journal missing verified phase'
     $backupMatches = [regex]::Matches($journalText, '(?m)^- backup: (?<path>.+?)\r?$')
     $journalBackup = $backupMatches[$backupMatches.Count - 1].Groups['path'].Value
-    Assert ($journalBackup.StartsWith('%USERPROFILE%') -and $journalBackup -match '\.bak-claude-lane-[a-f0-9]{32}$') 'Lane journal backup path must use %USERPROFILE%'
+    Assert ($journalBackup -match '^<SETTINGS-DIR>\\<SETTINGS-FILE>\.bak-claude-lane-[a-f0-9]{32}$') 'Nonstandard lane path must use placeholders'
     Assert (-not $journalText.Contains($root)) 'Lane journal leaked the fixture user profile'
     $journalHash = Hash $journal
     $r = Lane @('-ToOfficial','-Apply')
@@ -527,7 +554,7 @@ try {
     [IO.File]::WriteAllText($variant, $variantText, [Text.UTF8Encoding]::new($false))
   }
   Case 'legacy repository template refresh is pinned to its exact historical digest' {
-    $expectedLegacyHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
+    foreach ($expectedLegacyHash in @('7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af','d1d81170b3b5b0edd1769084dd3cc75dba01145736eb25e2b344a04a75591b8f')) {
     $profilePath = [IO.Path]::GetFullPath($profileRoot).Replace('\','/')
     $legacyTemplateText = $null
     foreach ($commit in @(git -C $repo rev-list --all -- 'settings.official-anthropic.json' 2>$null)) {
@@ -556,6 +583,7 @@ try {
     Assert ($r.Code -ne 0 -and $r.Text.Contains('neither the relay form nor the exact previous repository template')) $r.Text
     Assert ((Hash $settings) -eq $modifiedHash) 'Modified legacy settings were replaced'
     if ($journalBefore) { Assert ((Hash $journal) -eq $journalBefore) 'Rejected legacy settings changed the journal' }
+    }
     Write-Settings $relayText
   }
   Case 'lane rollback rejects drift and restores exact bytes with another backup' {
@@ -660,6 +688,40 @@ try {
     }
     Write-Settings $relayText
   }
+  Case 'relay endpoints reject invalid or cleartext remote URLs before any write' {
+    Write-Settings $variantText
+    $before=Hash $settings; $journalBefore=Hash $journal
+    $source=Join-Path $profileRoot 'endpoint-fixture.json'
+    foreach ($endpoint in @('', ' ', @('https://relay-fixture.invalid'), 'relative/path', 'ftp://relay-fixture.invalid', 'http://relay-fixture.invalid', 'https://private-user:private-secret@relay-fixture.invalid', 'https://relay-fixture.invalid/#private-secret')) {
+      [IO.File]::WriteAllText($source,(@{env=@{ANTHROPIC_BASE_URL=$endpoint;ANTHROPIC_AUTH_TOKEN='private-bearer-fixture'}} | ConvertTo-Json -Depth 10))
+      foreach ($options in @(@('-ToRelay','-RelayVariant',$source),@('-ToRelay','-RelayVariant',$source,'-Apply'))) {
+        $r=Lane $options
+        Assert ($r.Code -ne 0 -and -not $r.Text.Contains('private-secret') -and -not $r.Text.Contains('private-bearer-fixture')) 'Unsafe endpoint accepted or printed'
+        Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Rejected endpoint wrote data'
+      }
+    }
+    foreach ($endpoint in @('https://relay-fixture.invalid/anthropic','http://127.0.0.1:1234','http://[::1]:1234','http://localhost:1234')) {
+      [IO.File]::WriteAllText($source,(@{env=@{ANTHROPIC_BASE_URL=$endpoint;ANTHROPIC_AUTH_TOKEN='private-bearer-fixture'}} | ConvertTo-Json -Depth 10))
+      $r=Lane @('-ToRelay','-RelayVariant',$source)
+      Assert ($r.Code -eq 0 -and $r.Text.Contains('PREVIEW')) $r.Text
+      Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Endpoint preview wrote data'
+    }
+    Write-Settings $relayText
+  }
+  Case 'relay refuses provider and OAuth overrides even when their values are empty' {
+    Write-Settings $variantText
+    $before=Hash $settings; $journalBefore=Hash $journal
+    $source=Join-Path $profileRoot 'provider-fixture.json'
+    foreach ($name in @('CLAUDE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES')) {
+      $map=@{ANTHROPIC_BASE_URL='https://relay-fixture.invalid';ANTHROPIC_AUTH_TOKEN='private-bearer-fixture'}
+      $map[$name]=''
+      [IO.File]::WriteAllText($source,(@{env=$map} | ConvertTo-Json -Depth 10))
+      $r=Lane @('-ToRelay','-RelayVariant',$source,'-Apply')
+      Assert ($r.Code -ne 0 -and $r.Text.Contains('conflicting') -and -not $r.Text.Contains('private-bearer-fixture')) $r.Text
+      Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Rejected override wrote data'
+    }
+    Write-Settings $relayText
+  }
   Case 'relay source cannot be stored in the repository or reached through a directory junction' {
     $fakeRepo = Join-Path $root 'relay-repo'
     $null = New-Item -ItemType Directory -Path $fakeRepo
@@ -680,7 +742,7 @@ try {
     Write-Settings $relayText
   }
   Case 'permission repair preserves custom settings and rules with preview, raw backup, idempotence and protected rollback' {
-    $customText = '{"model":"custom-fixture","modelSettings":{"keep":true},"env":{"KEEP":"secret-fixture"},"permissions":{"defaultMode":"acceptEdits","deny":["Read(**/custom-private/**)"],"ask":["Bash(git push:*)"]},"hooks":{"Stop":[]}}'
+    $customText = '{"customTimestamp":"2030-01-02T03:04:05.000Z","nested":{"items":[null,[],["2030-01-02T03:04:05.1234567+08:00"],false,1]},"model":"custom-fixture","modelSettings":{"keep":true},"env":{"KEEP":"secret-fixture"},"permissions":{"defaultMode":"acceptEdits","deny":["Read(**/custom-private/**)"],"ask":["Bash(git push:*)"]},"hooks":{"Stop":[]}}'
     Write-Settings $customText
     $before=Hash $settings; $journalBefore=Hash $journal
     $backups=@(Get-ChildItem $profileRoot -Filter '*.bak-claude-env-*' | ForEach-Object FullName)
@@ -689,6 +751,12 @@ try {
     Assert ((Hash $settings) -eq $before -and (Hash $journal) -eq $journalBefore) 'Permission preview wrote files'
     $r=Install @('-RepairPermissions','-Apply')
     Assert ($r.Code -eq 0 -and $r.Text.Contains('APPLIED')) $r.Text
+    $document=[Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($settings))
+    try {
+      Assert ($document.RootElement.GetProperty('customTimestamp').GetString() -ceq '2030-01-02T03:04:05.000Z') 'Unrelated timestamp changed'
+      $items=$document.RootElement.GetProperty('nested').GetProperty('items')
+      Assert ($items.GetArrayLength() -eq 5 -and $items[0].ValueKind -eq 'Null' -and $items[1].GetArrayLength() -eq 0 -and $items[2][0].GetString() -ceq '2030-01-02T03:04:05.1234567+08:00' -and -not $items[3].GetBoolean() -and $items[4].GetInt32() -eq 1) 'Nested JSON types or strings changed'
+    } finally { $document.Dispose() }
     $newBackup=@(Get-ChildItem $profileRoot -Filter '*.bak-claude-env-*' | Where-Object FullName -NotIn $backups)
     Assert ($newBackup.Count -eq 1 -and (Hash $newBackup[0].FullName) -eq $before) 'Permission repair raw backup differs'
     $actual=Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable

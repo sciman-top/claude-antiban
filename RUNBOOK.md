@@ -142,6 +142,7 @@ pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:1080
 
 已有代理值不同或同名键出现多种大小写时拒绝写入；相同值保留原键名。
 其他 env、permissions、hook action/group/event 全部保留；空的本仓 hook 容器才移除。
+重写设置时保留 JSON 字符串类型（包括 ISO 时间字符串及其精度和时区文本），支持 PowerShell 7.3+。
 显式 `-RepairPermissions` 例外：只把 defaultMode 恢复为 bypassPermissions、移除被第三方加回的
 Auto/bypass 禁用键，并把仓库模板 deny 与现有 deny 合并；不删除自定义规则、模型、hooks、env 或其他权限键。
 它复用同一备份、日志、并发检测与哈希回滚流程；默认预览，重复 Apply 为 NO_CHANGE。
@@ -186,18 +187,23 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - ToRelay 用 `-RelayVariant` 指向一份**仓外**自备的 relay 设置文件，把它投影成新的机器设置；工具只是切换器，
   既不生成、不保存、也不回显其中任何取值，journal 只记动作名与哈希。源文件同样支持 `%USERPROFILE%` 占位。
   源文件是**完整的机器设置**（整文件替换）：以当前官方模板为底、只追加一个 `env` 块；写成最小文件会丢掉权限模板、deny 列表与 Manual 设置。
-- ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含 `env.ANTHROPIC_BASE_URL`
-  和非空字符串 `env.ANTHROPIC_AUTH_TOKEN`，且不得含 `apiKeyHelper`、`hooks`、`ANTHROPIC_API_KEY` 或
+- ToRelay 只从官方模板现状或已识别 relay 现状整文件切换（后者用于改指端点）；源文件必须含有效绝对 URL
+  `env.ANTHROPIC_BASE_URL` 和非空字符串 `env.ANTHROPIC_AUTH_TOKEN`。远端要求 HTTPS，HTTP 仅允许字面
+  loopback IP 或 localhost；拒绝空值、嵌入凭据和 fragment。不得含 `apiKeyHelper`、`hooks`、`ANTHROPIC_API_KEY` 或
   `CLAUDE_CODE_OAUTH_TOKEN`。已知订阅 OAuth 前缀也拒绝；工具不能证明任意 opaque token 的来源，
   操作者须确认它是独立、获授权的网关凭据。API-key-only 需要客户端交互确认后才取代订阅认证，
   此切换入口无法保证该确认已完成，因此拒绝该形式；不自动删除已保存登录来补齐条件。
   源文件的普通路径及解析目录链接后的真实路径都必须在仓外；其他现状先 `-ToOfficial` 再切。文件命名含 `token`/`credentials`
   可落入模板 deny 列表的读取拦截范围。
+  源文件还拒绝 `CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_OAUTH_*`、宿主管理 provider 标志及
+  Bedrock/Vertex/Foundry/Anthropic AWS/Mantle 开关，即使值为空也拒绝，避免中继选择被其他认证或 provider 配置覆盖。
 - 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
   即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
 - 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
 - 当前官方模板默认以 bypassPermissions 权限模式启动（2026-10-17 操作者裁决），不预先授权宽泛工具列表；Auto / bypass 禁用键已从基线移除，repair 会移除被第三方加回的禁用键。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
+  模板分别为 Bash 与原生 PowerShell 工具声明危险命令 deny，并封禁嵌套 shell（含 `pwsh`）；PowerShell 常用别名按客户端规则归一化。
+  这些规则不是 OS 级隔离，Read deny 也不覆盖任意 Python/Node 等子进程中的间接文件访问，不据此宣称凭据完全隔离。
 - 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。
 - install.ps1 与 Set-ClaudeLane.ps1 均在预览或写入前检查 cc-switch 进程；检测到运行即停止，不改设置或日志。
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
@@ -230,7 +236,8 @@ pwsh -NoProfile -File .\Set-ClaudeLane.ps1 -LaunchOfficial
 ```
 
 两种动作均要求设置与模板字节一致，拒绝模板中的认证 helper、路由覆盖和运行中的
-CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、订阅 token 环境变量、Bedrock/Vertex/Foundry
+CC Switch。子进程移除 `ANTHROPIC_*`、`CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_OAUTH_*`（含 refresh token/scopes）、
+`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`、Bedrock/Vertex/Foundry/Anthropic AWS/Mantle
 选择开关、已知模型/请求覆盖（含 `MAX_THINKING_TOKENS`、`CLAUDE_CODE_EXTRA_BODY`、`MAX_MCP_OUTPUT_TOKENS`）、登录等命令锁定及 `NODE_TLS_REJECT_UNAUTHORIZED`。
 父进程、User/Machine 环境、凭据文件均不改写；HTTP/HTTPS/ALL_PROXY/NO_PROXY、
 自定义 CA 与隐私偏好原样保留，不预设应当直连。

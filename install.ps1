@@ -31,8 +31,9 @@ function Get-JournalBackupPath([string]$Path) {
   $fullPath = [IO.Path]::GetFullPath($Path)
   if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
     $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
-    $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
-    if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    $standardBackup = Join-Path $profileRoot '.claude/settings.json.bak-claude-env-'
+    if ($fullPath.StartsWith($standardBackup, [StringComparison]::OrdinalIgnoreCase) -and
+        $fullPath.Substring($standardBackup.Length) -match '^[a-f0-9]{32}$') {
       return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
     }
   }
@@ -40,13 +41,37 @@ function Get-JournalBackupPath([string]$Path) {
   if ($suffix.Success) { return '<SETTINGS-DIR>\<SETTINGS-FILE>' + $suffix.Value }
   return '<SETTINGS-BACKUP>'
 }
+function ConvertFrom-SettingsToken($Token) {
+  switch ([string]$Token.get_Type()) {
+    'Object' {
+      $map = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+      foreach ($property in $Token.Properties()) { $map.Add($property.get_Name(), (ConvertFrom-SettingsToken $property.get_Value())) }
+      return ,$map
+    }
+    'Array' {
+      $items = [Collections.Generic.List[object]]::new()
+      foreach ($item in $Token.Children()) { $items.Add((ConvertFrom-SettingsToken $item)) }
+      return ,$items.ToArray()
+    }
+    default { return ,$Token.get_Value() }
+  }
+}
 function Read-Settings([byte[]]$Bytes) {
+  $reader = $null
   try {
     $text = [Text.Encoding]::UTF8.GetString($Bytes).TrimStart([char]0xfeff)
-    $value = ConvertFrom-Json -InputObject $text -AsHashtable -Depth 100
+    # PS 7.3/7.4 lack ConvertFrom-Json -DateKind String. Use the bundled parser
+    # with date conversion disabled so unrelated JSON strings survive every write.
+    $reader = [Newtonsoft.Json.JsonTextReader]::new([IO.StringReader]::new($text))
+    $reader.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
+    $reader.MaxDepth = 100
+    $token = [Newtonsoft.Json.Linq.JToken]::ReadFrom($reader)
+    while ($reader.Read()) { if ($reader.TokenType -ne [Newtonsoft.Json.JsonToken]::Comment) { throw 'trailing content' } }
+    $value = ConvertFrom-SettingsToken $token
     if ($value -isnot [Collections.IDictionary]) { throw 'root' }
     return $value
   } catch { throw 'Settings must be a valid JSON object; no changes made.' }
+  finally { if ($null -ne $reader) { $reader.Close() } }
 }
 function Test-LegacyHook($Hook) {
   if ($Hook -isnot [Collections.IDictionary] -or $Hook['type'] -ne 'command') { return $false }

@@ -21,12 +21,15 @@ if (($OfficialPreflight -or $LaunchOfficial) -and ($Apply -or $ExpectedCurrentHa
   throw 'Official process actions cannot be combined with file-write or rollback options.'
 }
 if (-not [string]::IsNullOrWhiteSpace($RelayVariant) -and -not $ToRelay) { throw 'RelayVariant requires ToRelay.' }
-$legacyOfficialTemplateHash = '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af'
+$legacyOfficialTemplateHashes = @(
+  '7670e3ce0a27aea327f17d4ccf3f0293ba578d75ed783eb3dfd2d93bbaa355af',
+  'd1d81170b3b5b0edd1769084dd3cc75dba01145736eb25e2b344a04a75591b8f'
+)
 
 function Test-OfficialOverride([string]$Name) {
   # Beyond the ANTHROPIC_ prefix, these documented model/request overrides must
   # not leak from a relay environment into an official-lane child process.
-  return $Name -imatch '^ANTHROPIC_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|CLAUDE_CODE_EXTRA_BODY|MAX_THINKING_TOKENS|MAX_MCP_OUTPUT_TOKENS|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
+  return $Name -imatch '^ANTHROPIC_|^CLAUDE_CODE_OAUTH_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_USE_ANTHROPIC_AWS|CLAUDE_CODE_USE_MANTLE|CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|CLAUDE_CODE_SUBAGENT_MODEL|CLAUDE_CODE_ATTRIBUTION_HEADER|CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK|CLAUDE_CODE_MAX_OUTPUT_TOKENS|CLAUDE_CODE_EFFORT_LEVEL|CLAUDE_CODE_EXTRA_BODY|MAX_THINKING_TOKENS|MAX_MCP_OUTPUT_TOKENS|DISABLE_(LOGIN|LOGOUT|UPGRADE|EXTRA_USAGE)_COMMAND|NODE_TLS_REJECT_UNAUTHORIZED)$'
 }
 
 function Get-Hash([byte[]]$Bytes) {
@@ -44,8 +47,9 @@ function Get-JournalBackupPath([string]$Path) {
   $fullPath = [IO.Path]::GetFullPath($Path)
   if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
     $profileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd([char[]]@('\','/'))
-    $profilePrefix = $profileRoot + [IO.Path]::DirectorySeparatorChar
-    if ($fullPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    $standardBackup = Join-Path $profileRoot '.claude/settings.json.bak-claude-lane-'
+    if ($fullPath.StartsWith($standardBackup, [StringComparison]::OrdinalIgnoreCase) -and
+        $fullPath.Substring($standardBackup.Length) -match '^[a-f0-9]{32}$') {
       return '%USERPROFILE%' + $fullPath.Substring($profileRoot.Length)
     }
   }
@@ -84,7 +88,7 @@ function Test-LegacyOfficialTemplate([byte[]]$Bytes) {
     $profilePath = [IO.Path]::GetFullPath($env:USERPROFILE).Replace('\', '/')
     $normalized = $text.Replace($profilePath, '%USERPROFILE%').Replace("`r`n", "`n").Replace("`r", "`n")
     $normalizedBytes = [Text.UTF8Encoding]::new($false).GetBytes($normalized)
-    return (Get-Hash $normalizedBytes) -eq $legacyOfficialTemplateHash
+    return (Get-Hash $normalizedBytes) -in $legacyOfficialTemplateHashes
   } catch { return $false }
 }
 function Assert-EntryTarget([string]$Path, [string]$What) {
@@ -116,6 +120,22 @@ function Assert-ExternalRelaySource([string]$Path) {
 }
 function Assert-RelayCredential($Json) {
   $map = $Json['env']
+  $urlKeys = @($map.Keys | Where-Object { [string]$_ -ieq 'ANTHROPIC_BASE_URL' })
+  $uri = $null
+  if ($urlKeys.Count -ne 1 -or $map[$urlKeys[0]] -isnot [string] -or
+      [string]::IsNullOrWhiteSpace($map[$urlKeys[0]]) -or
+      -not [uri]::TryCreate($map[$urlKeys[0]], [UriKind]::Absolute, [ref]$uri) -or
+      $uri.Scheme -notin @('http','https') -or -not $uri.Host -or $uri.UserInfo -or $uri.Fragment) {
+    throw 'Relay endpoint must be an absolute HTTP/HTTPS URL without embedded credentials or fragments; no replacement.'
+  }
+  $hostIp = $null
+  $loopback = $uri.Host -ieq 'localhost' -or
+    ([Net.IPAddress]::TryParse($uri.Host.Trim([char[]]@('[',']')), [ref]$hostIp) -and [Net.IPAddress]::IsLoopback($hostIp))
+  if ($uri.Scheme -eq 'http' -and -not $loopback) { throw 'Remote relay endpoints require HTTPS; HTTP is allowed only for literal loopback addresses or localhost.' }
+  $conflicts = @($map.Keys | Where-Object {
+    [string]$_ -imatch '^CLAUDE_CODE_OAUTH_|^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY|ANTHROPIC_AWS|MANTLE))$'
+  })
+  if ($conflicts.Count) { throw 'Relay source contains conflicting authentication or provider overrides; no replacement.' }
   $tokenKeys = @($map.Keys | Where-Object { [string]$_ -ieq 'ANTHROPIC_AUTH_TOKEN' })
   # Bearer auth takes precedence immediately. API-key-only configurations need an
   # interactive approval and cannot provide this switcher's no-OAuth-fallback boundary.

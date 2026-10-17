@@ -32,7 +32,21 @@
       "Bash(format *)",
       "Bash(reg delete*)",
       "Bash(powershell:*)",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell.exe:*)",
+      "Bash(pwsh:*)",
+      "Bash(pwsh.exe:*)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git clean -*)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Clear-Disk *)",
+      "PowerShell(Format-Volume *)",
+      "PowerShell(format *)",
+      "PowerShell(reg delete*)",
+      "PowerShell(Remove-ItemProperty *)",
+      "PowerShell(powershell:*)",
+      "PowerShell(powershell.exe:*)",
+      "PowerShell(pwsh:*)",
+      "PowerShell(pwsh.exe:*)"
     ]
   },
   "skipDangerousModePermissionPrompt": false,
