@@ -193,3 +193,13 @@ exit=0（期望 0）
 - phase: applied-readback-verified
 - verification: Machine scope HTTP_PROXY/HTTPS_PROXY absent; User scope unchanged; ALL_PROXY unchanged and equal across scopes; NO_PROXY differs across scopes (values not recorded), left as operator policy
 - boundary: filesystem_projected; sanitized manual-change record, not installer output
+
+## 2026-10-17T13:43:47+08:00 | <HOST-f7563cc1>
+- operation: manual-env-cleanup
+- phase: prepared
+- actions: remove-machine-scope-ALL_PROXY, remove-machine-scope-NO_PROXY
+- executor: elevated PowerShell on user instruction (agent-executed via UAC); outside installer scope
+- note: old values not recorded per section 7; rollback requires operator-provided values
+- phase: applied-readback-verified
+- verification: Machine scope has no proxy variables remaining (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY all absent); User scope all four present and unchanged; proxy policy single-sourced at user scope
+- boundary: filesystem_projected; sanitized manual-change record, not installer output
