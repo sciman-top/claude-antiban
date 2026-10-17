@@ -145,11 +145,13 @@ try {
     Assert (-not $official.permissions.Contains('disableAutoMode') -and -not $official.permissions.Contains('disableBypassPermissionsMode')) 'Approval-mode disable pins must stay absent'
     Assert (-not $official.Contains('env') -and -not $official.permissions.Contains('additionalDirectories')) 'Official template must not carry machine routing or extra workspace paths'
     Assert (-not $official.Contains('statusLine')) 'Official template must not reference an unavailable local status script'
-    foreach ($rule in @('PowerShell(git reset --hard*)','PowerShell(git clean -*)','PowerShell(Remove-Item *)','PowerShell(Format-Volume *)','PowerShell(reg delete*)','PowerShell(powershell.exe:*)','PowerShell(pwsh.exe:*)')) {
+    foreach ($rule in @('PowerShell(git reset --hard*)','PowerShell(git clean -*)','PowerShell(Remove-Item *)','PowerShell(Format-Volume *)','PowerShell(reg delete*)')) {
       Assert ($official.permissions.deny -ccontains $rule) "Missing native PowerShell protection: $rule"
     }
-    foreach ($rule in @('Bash(powershell.exe:*)','Bash(pwsh.exe:*)')) {
-      Assert ($official.permissions.deny -ccontains $rule) "Missing nested shell protection: $rule"
+    # 解释器前缀（pwsh/powershell 及 .exe 变体）不得回归：PowerShell 7-only 仓库
+    # 工作流本身以 pwsh 起头，封禁解释器会让 bypass 自主基线下每条 shell 命令都弹确认。
+    foreach ($rule in @('Bash(powershell:*)','Bash(powershell.exe:*)','Bash(pwsh:*)','Bash(pwsh.exe:*)','PowerShell(powershell:*)','PowerShell(powershell.exe:*)','PowerShell(pwsh:*)','PowerShell(pwsh.exe:*)')) {
+      Assert (-not ($official.permissions.deny -ccontains $rule)) "Interpreter-blanket deny must stay absent: $rule"
     }
     Assert ($officialText -notmatch '127\.0\.0\.1|skills-manager|claude-dashboard') 'Official template still carries machine-specific values'
   }

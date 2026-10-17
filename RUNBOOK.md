@@ -202,8 +202,8 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
 - 当前官方模板默认以 bypassPermissions 权限模式启动（2026-10-17 操作者裁决），不预先授权宽泛工具列表；Auto / bypass 禁用键已从基线移除，repair 会移除被第三方加回的禁用键。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
-  模板分别为 Bash 与原生 PowerShell 工具声明危险命令 deny，并封禁嵌套 shell（含 `pwsh`）；PowerShell 常用别名按客户端规则归一化。
-  这些规则不是 OS 级隔离，Read deny 也不覆盖任意 Python/Node 等子进程中的间接文件访问，不据此宣称凭据完全隔离。
+  模板分别为 Bash 与原生 PowerShell 工具按命令前缀声明危险命令 deny；2026-10-18 起不再封禁解释器前缀（`pwsh`/`powershell` 及 `.exe` 变体）——PowerShell 7-only 仓库工作流本身以 `pwsh` 起头，封禁解释器会使 bypass 自主基线下每条 shell 命令都升级为确认弹窗。
+  这些规则不是 OS 级隔离：deny 前缀规则看不到嵌套 shell 内部（间接包装可绕过前缀匹配，由残余 deny 与审查层兜底），Read deny 也不覆盖任意 Python/Node 等子进程中的间接文件访问，不据此宣称凭据完全隔离。PowerShell 常用别名按客户端规则归一化。
 - 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。
 - install.ps1 与 Set-ClaudeLane.ps1 均在预览或写入前检查 cc-switch 进程；检测到运行即停止，不改设置或日志。
 - 备份为 settings.json 同目录 `settings.json.bak-claude-lane-<GUID>` 原字节；
