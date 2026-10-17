@@ -278,7 +278,7 @@ exit=0（期望 0）
 - after_sha256: 152093cd30bcebb54b0b97d80c80918e8fe1c45ac468feaa80274f23f83371db
 - phase: applied-readback-verified
 
-## 2026-10-18T+08:00 | <ZCode-denyclean>
+## 2026-10-18T00:34:38+08:00 | <ZCode-denyclean>
 - phase: prepared
 - actions: deny-remove-interpreter-blanket (8 rules: Bash/PowerShell × powershell(.exe)/pwsh(.exe); template 468c476 同步删除, qa 断言翻转为缺席守卫, RUNBOOK 契约句更新)
 - reason: bypass 自主基线下解释器前缀 deny 使每条 pwsh shell 命令升级为确认弹窗, 与 PowerShell 7-only 仓库工作流正面冲突; 操作者 2026-10-18 裁决继续自主执行
