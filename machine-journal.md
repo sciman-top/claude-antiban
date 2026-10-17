@@ -167,3 +167,29 @@ exit=0（期望 0）
 - recovery: the first serialization changed an unrelated timestamp format; hash-bound rollback restored original bytes before the corrected repair using DateKind String; only this final attempt has semantic acceptance
 - rollback: run repair.ps1 beside this backup with -Rollback -ExpectedCurrentHash efd2b55b86761c89293a8d1b0f3606586adca2c52c31b86b181cec0d9c2de926; preview first, then -Apply; newer settings or database hashes are refused
 - boundary: filesystem_projected; no client restart, OAuth login, token refresh or model request
+
+## 2026-10-17T10:57:39.3412510+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: add-HTTP_PROXY,add-HTTPS_PROXY
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-51a1817f0fd8465e8a135b232265fdc4
+- before_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
+- after_sha256: 7dede29f26687ae2137c82cd9f92f4aa5c4969983f432baade182157012090ce
+- phase: applied-readback-verified
+
+## 2026-10-17T11:06:23.2269245+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: restore-unchanged-snapshot
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-a57cc62b47774d429fcdf461f4a9f6c2
+- before_sha256: 7dede29f26687ae2137c82cd9f92f4aa5c4969983f432baade182157012090ce
+- after_sha256: bdba811e17f28c59c9aa2bb9d52b4feb89d5b9d1547dccad827aa55d50d5f697
+- phase: applied-readback-verified
+
+## 2026-10-17T12:46:21+08:00 | <HOST-f7563cc1>
+- operation: manual-env-cleanup
+- phase: prepared
+- actions: remove-machine-scope-HTTP_PROXY, remove-machine-scope-HTTPS_PROXY
+- executor: user manual via elevated PowerShell; outside installer scope; recommended and verified by agent session
+- note: old values not recorded per section 7; rollback requires operator-provided values
+- phase: applied-readback-verified
+- verification: Machine scope HTTP_PROXY/HTTPS_PROXY absent; User scope unchanged; ALL_PROXY unchanged and equal across scopes; NO_PROXY differs across scopes (values not recorded), left as operator policy
+- boundary: filesystem_projected; sanitized manual-change record, not installer output
