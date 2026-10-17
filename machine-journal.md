@@ -221,3 +221,17 @@ exit=0（期望 0）
 - reconciliation: differs from the 2026-10-17T13:43:47 entry reporting all Machine proxy variables absent; reappearance source unresolved; direct Scheduled Task action and Run-key scan found no explicit environment writer
 - rollback: restore from local DPAPI backup only if both target Machine values remain absent; preserve later values
 - boundary: filesystem_projected; no process restart, login, token refresh, model request, or route probe
+
+## 2026-10-17T14:09:06+08:00 | <HOST-f7563cc1>
+- operation: desktop-direct-out-guard
+- phase: prepared
+- actions: create-outbound-block-rules(claude-desktop-direct-out-guard), remove-machine-scope-ALL_PROXY, remove-machine-scope-NO_PROXY
+- executor: agent session via elevated pwsh payload (UAC approved); user authorized "按你的推荐/建议连续执行修复和优化"
+- firewall: four outbound Block rules (TCP 80,443 + UDP 443 QUIC), two scoped to the Desktop MSIX Claude.exe image path, two to the package SID from AppContainer mappings; loopback proxy traffic is unfiltered so proxied egress is unaffected; package rules also cover in-package helper images; cowork-svc.exe direct outbound intentionally not blocked
+- env correction: the 13:43:47 removal reported all Machine proxy variables absent but actually left ALL_PROXY/NO_PROXY as EMPTY-STRING registry values; pwsh coerces $null to an empty string when calling [Environment]::SetEnvironmentVariable; empty values read as absent under truthiness checks and present under null checks, which fully explains the 13:43 vs 13:54 discrepancy above; there was no reappearance and no hidden environment writer
+- current env state: HKLM ALL_PROXY/NO_PROXY remain empty-string values, functionally inert because User scope defines both names and shadows Machine scope; a corrective Remove-ItemProperty payload was prepared but its UAC prompt was cancelled by the operator, so proper deletion is pending and reduces to: Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" -Name ALL_PROXY,NO_PROXY
+- phase: applied-readback-verified
+- verification: elevated readback plus independent non-elevated readback agree on all four rules enabled=True direction=Outbound action=Block with expected protocols/ports; re-verified still present after this file's concurrent edits; no client restart; proxy-down failure path not live-tested (would require killing the local proxy mid-use)
+- boundary: filesystem_projected
+- rollback: Remove-NetFirewallRule -Name ClaudeDesktop-DirectOutGuard-TCP-Prog,ClaudeDesktop-DirectOutGuard-TCP-Pkg,ClaudeDesktop-DirectOutGuard-QUIC-Prog,ClaudeDesktop-DirectOutGuard-QUIC-Pkg; Machine env empty strings deletable with the command above
+- residue: program-path rules stop matching after the Desktop package updates (versioned image path changes); re-create with the same payload then; package-SID rules intend to survive updates but matching of full-trust desktop-bridge processes is not live-verified
