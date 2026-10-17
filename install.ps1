@@ -91,17 +91,22 @@ if ($RollbackBackup) {
     $templateText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'settings.official-anthropic.json')).Replace('%USERPROFILE%', $profilePath)
     $template = Read-Settings ([Text.UTF8Encoding]::new($false).GetBytes($templateText))
     $policy = $template['permissions']
-    if ($policy -isnot [Collections.IDictionary] -or $policy['defaultMode'] -cne 'default' -or
-        $policy['disableAutoMode'] -cne 'disable' -or $policy['disableBypassPermissionsMode'] -cne 'disable') {
+    if ($policy -isnot [Collections.IDictionary] -or $policy['defaultMode'] -cne 'bypassPermissions' -or
+        $policy.Contains('disableAutoMode') -or $policy.Contains('disableBypassPermissionsMode')) {
       throw 'Permission template does not define the expected approval boundary; no changes made.'
     }
     if (-not $json.Contains('permissions')) { $json['permissions'] = @{} }
     $permissions = $json['permissions']
     if ($permissions -isnot [Collections.IDictionary]) { throw 'permissions must be an object.' }
     foreach ($key in @('defaultMode','disableAutoMode','disableBypassPermissionsMode')) {
-      if ($permissions[$key] -cne $policy[$key]) {
-        $permissions[$key] = $policy[$key]
-        $actions.Add("repair-permissions-$key")
+      if ($policy.Contains($key)) {
+        if ($permissions[$key] -cne $policy[$key]) {
+          $permissions[$key] = $policy[$key]
+          $actions.Add("repair-permissions-$key")
+        }
+      } elseif ($permissions.Contains($key)) {
+        $permissions.Remove($key)
+        $actions.Add("repair-permissions-remove-$key")
       }
     }
     if ($policy['deny'] -isnot [array] -or ($permissions.Contains('deny') -and $permissions['deny'] -isnot [array])) {

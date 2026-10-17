@@ -142,8 +142,8 @@ pwsh -NoProfile -File .\install.ps1 -ConfigureProxy -Proxy http://127.0.0.1:1080
 
 已有代理值不同或同名键出现多种大小写时拒绝写入；相同值保留原键名。
 其他 env、permissions、hook action/group/event 全部保留；空的本仓 hook 容器才移除。
-显式 `-RepairPermissions` 例外：只把 defaultMode 恢复为 default、禁用 Auto/bypass，
-并把仓库模板 deny 与现有 deny 合并；不删除自定义规则、模型、hooks、env 或其他权限键。
+显式 `-RepairPermissions` 例外：只把 defaultMode 恢复为 bypassPermissions、移除被第三方加回的
+Auto/bypass 禁用键，并把仓库模板 deny 与现有 deny 合并；不删除自定义规则、模型、hooks、env 或其他权限键。
 它复用同一备份、日志、并发检测与哈希回滚流程；默认预览，重复 Apply 为 NO_CHANGE。
 用户设置不是不可覆盖的组织策略，当前会话与 managed 设置的实际行为仍须独立验证。
 无修改则不写文件、不建备份、不写日志，也不联网。
@@ -196,7 +196,7 @@ status 同时返回 `process_overrides_present`（仅变量名）及 `route_veri
 - 中继识别目前只检查用户设置的 `env.ANTHROPIC_BASE_URL` 是否存在。命中后，`ToOfficial` 会整文件替换，
   即使原文件还有模板外设置也不会保留；预览会显式提示该替换范围。执行前先确认不需保留这些键；除精确匹配上一版模板的已识别迁移外，其他 `custom` 形态 fail-closed。
 - 确需增加权限约束时，应先在仓内更新模板并验证，再按新模板投影，避免模板与机器设置漂移。
-- 当前官方模板采用默认逐项确认权限模式，不预先授权宽泛工具列表，并禁用 Auto / bypass 权限模式。它不内置代理端点、附加项目目录或本机状态栏脚本。
+- 当前官方模板默认以 bypassPermissions 权限模式启动（2026-10-17 操作者裁决），不预先授权宽泛工具列表；Auto / bypass 禁用键已从基线移除，repair 会移除被第三方加回的禁用键。它不内置代理端点、附加项目目录或本机状态栏脚本。
 - 权限键按 [Claude Code 官方权限文档](https://code.claude.com/docs/en/permissions) 设置；具体执行仍受客户端版本、managed settings 与当前会话状态影响。
 - 移除的是 settings 文件内的固定代理配置；继承的 Process / User / Machine 环境代理仍可能影响实际路由，预检只报告存在性，不会替操作者删除或改写。
 - install.ps1 与 Set-ClaudeLane.ps1 均在预览或写入前检查 cc-switch 进程；检测到运行即停止，不改设置或日志。

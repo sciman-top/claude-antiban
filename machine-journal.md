@@ -258,3 +258,14 @@ exit=0（期望 0）
 - before_sha256: a6091c378cb430aecebe4e01b3083823988f6270fc82f1953e5cedf2fe92e288
 - after_sha256: d90a5b812e58eed2a4a5b265aa37fa3c5d40d2b791a75ab3d23262c5920378ca
 - phase: applied-readback-verified
+
+## 2026-10-17T19:44:16.8517805+08:00 | <HOST-f7563cc1>
+- operation: authorized-permission-baseline-unlock
+- phase: applied-readback-verified
+- actions: set-permissions-defaultMode-bypassPermissions,remove-permissions-disableAutoMode,remove-permissions-disableBypassPermissionsMode
+- executor: ZCode session; direct settings.json edit authorized by the operator; the earlier 17:0x unlock was reverted by the 18:47:50 repair, which this baseline change supersedes
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-7a79b715f89f45b69cfe7db5448b0537 (pre-repair snapshot); the 18:47 repaired bytes remain recoverable via that entry after_sha256
+- before_sha256: d90a5b812e58eed2a4a5b265aa37fa3c5d40d2b791a75ab3d23262c5920378ca
+- after_sha256: b215173bc37893446fae9a42c82df84e40570e3ded22a3e29d4d241407c21423
+- boundary: filesystem_projected; deny list preserved; no client restart; Desktop session restart still required for live acceptance
+- followup: settings.official-anthropic.json template, install.ps1 repair boundary, qa assertions and RUNBOOK updated in this commit so -RepairPermissions enforces the new baseline instead of reverting it

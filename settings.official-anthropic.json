@@ -8,7 +8,7 @@
   },
   "language": "Chinese",
   "permissions": {
-    "defaultMode": "default",
+    "defaultMode": "bypassPermissions",
     "deny": [
       "Bash(*..*)",
       "Read(**/.env)",
@@ -33,9 +33,7 @@
       "Bash(reg delete*)",
       "Bash(powershell:*)",
       "Bash(powershell.exe:*)"
-    ],
-    "disableAutoMode": "disable",
-    "disableBypassPermissionsMode": "disable"
+    ]
   },
   "skipDangerousModePermissionPrompt": false,
   "tui": "fullscreen"

@@ -137,12 +137,12 @@ if ($Mode -eq 'install') {
 exit $LASTEXITCODE
 '@, [Text.UTF8Encoding]::new($false))
 try {
-  Case 'official template keeps normal approval boundaries and no fixed network route' {
+  Case 'official template keeps the agreed approval boundary and no fixed network route' {
     $officialText = Get-Content -Raw -LiteralPath (Join-Path $repo 'settings.official-anthropic.json')
     $official = $officialText | ConvertFrom-Json -AsHashtable -Depth 100
-    Assert ($official.permissions.defaultMode -eq 'default') 'Official template must use the normal permission mode'
+    Assert ($official.permissions.defaultMode -eq 'bypassPermissions') 'Official template must default to bypass permissions'
     Assert (-not $official.permissions.Contains('allow')) 'Official template must not auto-authorize a broad tool list'
-    Assert ($official.permissions.disableAutoMode -eq 'disable' -and $official.permissions.disableBypassPermissionsMode -eq 'disable') 'Automatic approval modes must remain disabled'
+    Assert (-not $official.permissions.Contains('disableAutoMode') -and -not $official.permissions.Contains('disableBypassPermissionsMode')) 'Approval-mode disable pins must stay absent'
     Assert (-not $official.Contains('env') -and -not $official.permissions.Contains('additionalDirectories')) 'Official template must not carry machine routing or extra workspace paths'
     Assert (-not $official.Contains('statusLine')) 'Official template must not reference an unavailable local status script'
     Assert ($officialText -notmatch '127\.0\.0\.1|skills-manager|claude-dashboard') 'Official template still carries machine-specific values'
@@ -585,7 +585,7 @@ try {
   }
   Case 'relay lane switch projects a repo-external variant without printing or journalling values' {
     $relayVariant = Join-Path $profileRoot 'relay-variant.json'
-    $relaySource = '{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"},"permissions":{"defaultMode":"default","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}'
+    $relaySource = '{"env":{"ANTHROPIC_BASE_URL":"https://relay-fixture.invalid/anthropic","ANTHROPIC_AUTH_TOKEN":"secret-fixture"},"permissions":{"defaultMode":"bypassPermissions"}}'
     [IO.File]::WriteAllText($relayVariant, $relaySource, [Text.UTF8Encoding]::new($false))
     Write-Settings $variantText
     $before = Hash $settings; $journalBefore = Hash $journal
@@ -680,7 +680,7 @@ try {
     Write-Settings $relayText
   }
   Case 'permission repair preserves custom settings and rules with preview, raw backup, idempotence and protected rollback' {
-    $customText = '{"model":"custom-fixture","modelSettings":{"keep":true},"env":{"KEEP":"secret-fixture"},"permissions":{"defaultMode":"bypassPermissions","deny":["Read(**/custom-private/**)"],"ask":["Bash(git push:*)"]},"hooks":{"Stop":[]}}'
+    $customText = '{"model":"custom-fixture","modelSettings":{"keep":true},"env":{"KEEP":"secret-fixture"},"permissions":{"defaultMode":"acceptEdits","deny":["Read(**/custom-private/**)"],"ask":["Bash(git push:*)"]},"hooks":{"Stop":[]}}'
     Write-Settings $customText
     $before=Hash $settings; $journalBefore=Hash $journal
     $backups=@(Get-ChildItem $profileRoot -Filter '*.bak-claude-env-*' | ForEach-Object FullName)
@@ -695,7 +695,7 @@ try {
     $expected=$customText | ConvertFrom-Json -AsHashtable
     $profilePath=[IO.Path]::GetFullPath($profileRoot).Replace('\','/')
     $policy=((Get-Content -Raw -LiteralPath (Join-Path $repo 'settings.official-anthropic.json')).Replace('%USERPROFILE%',$profilePath) | ConvertFrom-Json -AsHashtable).permissions
-    Assert ($actual.permissions.defaultMode -eq 'default' -and $actual.permissions.disableAutoMode -eq 'disable' -and $actual.permissions.disableBypassPermissionsMode -eq 'disable') 'Permission boundary not repaired'
+    Assert ($actual.permissions.defaultMode -eq 'bypassPermissions' -and -not $actual.permissions.Contains('disableAutoMode') -and -not $actual.permissions.Contains('disableBypassPermissionsMode')) 'Permission boundary not repaired'
     Assert ($actual.permissions.deny -contains 'Read(**/custom-private/**)') 'Custom deny lost'
     foreach($rule in $policy.deny) { Assert ($actual.permissions.deny -ccontains $rule) 'Template deny missing' }
     Assert ($actual.permissions.deny -ccontains "Read($profilePath/.claude/settings.json)" -and -not ($actual.permissions.deny -match '%USERPROFILE%')) 'Permission repair left unexpanded user paths'
@@ -717,7 +717,7 @@ try {
     $r=Install @('-RepairPermissions','-Apply')
     Assert ($r.Code -eq 0) $r.Text
     $j=Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json -AsHashtable
-    Assert ($j.label -eq 'keep' -and $j.permissions.defaultMode -eq 'default') 'Missing permissions were not initialized conservatively'
+    Assert ($j.label -eq 'keep' -and $j.permissions.defaultMode -eq 'bypassPermissions') 'Missing permissions were not initialized to the template baseline'
     Assert ($j.permissions.deny -ccontains "Read($profilePath/.claude/.credentials.json)") 'Missing permissions did not receive projected credential protection'
     $before=Hash $settings; $journalBefore=Hash $journal
     $r=Run (Join-Path $repo 'install.ps1') @('-SettingsPath',$settings,'-JournalPath',$journal,'-RepairPermissions','-Apply') @{USERPROFILE=''}
