@@ -269,3 +269,11 @@ exit=0（期望 0）
 - after_sha256: b215173bc37893446fae9a42c82df84e40570e3ded22a3e29d4d241407c21423
 - boundary: filesystem_projected; deny list preserved; no client restart; Desktop session restart still required for live acceptance
 - followup: settings.official-anthropic.json template, install.ps1 repair boundary, qa assertions and RUNBOOK updated in this commit so -RepairPermissions enforces the new baseline instead of reverting it
+
+## 2026-10-17T23:14:52.3329796+08:00 | <HOST-f7563cc1>
+- phase: prepared
+- actions: repair-permissions-deny-union
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-80af5c9bb03a4916beeb334baf8bc770
+- before_sha256: b215173bc37893446fae9a42c82df84e40570e3ded22a3e29d4d241407c21423
+- after_sha256: 152093cd30bcebb54b0b97d80c80918e8fe1c45ac468feaa80274f23f83371db
+- phase: applied-readback-verified
