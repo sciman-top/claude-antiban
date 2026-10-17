@@ -9,6 +9,9 @@
   "language": "Chinese",
   "permissions": {
     "defaultMode": "bypassPermissions",
+    "allow": [
+      "mcp__terminal__run_in_terminal"
+    ],
     "deny": [
       "Bash(*..*)",
       "Read(**/.env)",

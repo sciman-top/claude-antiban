@@ -141,7 +141,7 @@ try {
     $officialText = Get-Content -Raw -LiteralPath (Join-Path $repo 'settings.official-anthropic.json')
     $official = $officialText | ConvertFrom-Json -AsHashtable -Depth 100
     Assert ($official.permissions.defaultMode -eq 'bypassPermissions') 'Official template must default to bypass permissions'
-    Assert (-not $official.permissions.Contains('allow')) 'Official template must not auto-authorize a broad tool list'
+    Assert (@($official.permissions.allow).Count -eq 1 -and $official.permissions.allow[0] -ceq 'mcp__terminal__run_in_terminal') 'Official template allow list must stay scoped to the Desktop terminal tool'
     Assert (-not $official.permissions.Contains('disableAutoMode') -and -not $official.permissions.Contains('disableBypassPermissionsMode')) 'Approval-mode disable pins must stay absent'
     Assert (-not $official.Contains('env') -and -not $official.permissions.Contains('additionalDirectories')) 'Official template must not carry machine routing or extra workspace paths'
     Assert (-not $official.Contains('statusLine')) 'Official template must not reference an unavailable local status script'
