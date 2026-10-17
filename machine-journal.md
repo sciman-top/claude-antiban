@@ -277,3 +277,14 @@ exit=0（期望 0）
 - before_sha256: b215173bc37893446fae9a42c82df84e40570e3ded22a3e29d4d241407c21423
 - after_sha256: 152093cd30bcebb54b0b97d80c80918e8fe1c45ac468feaa80274f23f83371db
 - phase: applied-readback-verified
+
+## 2026-10-18T+08:00 | <ZCode-denyclean>
+- phase: prepared
+- actions: deny-remove-interpreter-blanket (8 rules: Bash/PowerShell × powershell(.exe)/pwsh(.exe); template 468c476 同步删除, qa 断言翻转为缺席守卫, RUNBOOK 契约句更新)
+- reason: bypass 自主基线下解释器前缀 deny 使每条 pwsh shell 命令升级为确认弹窗, 与 PowerShell 7-only 仓库工作流正面冲突; 操作者 2026-10-18 裁决继续自主执行
+- backup: %USERPROFILE%\.claude\settings.json.bak-claude-env-036503eeba499cceee73a8152a4cd456
+- before_sha256: 152093cd30bcebb54b0b97d80c80918e8fe1c45ac468feaa80274f23f83371db
+- after_sha256: 987ccb67ef1a7fdc145bfeea7831d6cc006e2c64e912a66b4f6552556765308d
+- phase: applied-readback-verified
+- executor: ZCode session; direct settings.json edit authorized by the operator (按推荐连续执行)
+- boundary: filesystem_projected; 危险操作 deny(29 条)全保留; no client restart; Claude 会话重启后才加载新规则
